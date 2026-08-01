@@ -245,3 +245,7 @@ Near-term work focuses on:
 2. typed event payloads and safer argument introspection;
 3. typed invocation only after thread attachment, execution context, result,
    and exception semantics are defined.
+
+## License
+
+Il2Bridge is available under the [MIT License](LICENSE).
