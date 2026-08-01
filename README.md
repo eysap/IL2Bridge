@@ -73,8 +73,8 @@ ctest --test-dir build --output-on-failure
 The resulting binaries are:
 
 ```text
-build/loader/libil2bridge-loader.so
-build/broker/il2bridge
+build/lib/libil2bridge-loader.so
+build/bin/il2bridge
 ```
 
 ## Quick start
@@ -84,7 +84,7 @@ build/broker/il2bridge
 Start an IL2CPP application with the loader preloaded:
 
 ```bash
-LD_PRELOAD="$PWD/build/loader/libil2bridge-loader.so" \
+LD_PRELOAD="$PWD/build/lib/libil2bridge-loader.so" \
   /path/to/il2cpp-application
 ```
 
@@ -96,7 +96,7 @@ handle, resolves its required API, and only then exposes IPC.
 ### 2. Discover the target
 
 ```console
-$ IL2BRIDGE=./build/broker/il2bridge
+$ IL2BRIDGE=./build/bin/il2bridge
 $ "$IL2BRIDGE" targets list
 42420:31147059  pid=42420  socket=/run/user/1000/il2bridge/42420.sock
 

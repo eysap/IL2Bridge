@@ -1,7 +1,7 @@
 #pragma once
 // Shared between breakpoint.c and trampoline.c only -- not part of the
 // public loader API (no api.h visibility tag, no extern "C" guard: nothing
-// outside loader/src/hooks/ includes this).
+// outside src/loader/hooks includes this).
 
 #include <stdbool.h>
 #include <stddef.h>
