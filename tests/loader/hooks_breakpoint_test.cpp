@@ -8,22 +8,22 @@ volatile int g_target_calls = 0;
 volatile int g_detour_calls = 0;
 
 extern "C" __attribute__((noinline)) void breakpoint_test_target(void) {
-    g_target_calls++;
+    g_target_calls = g_target_calls + 1;
 }
 
 extern "C" void breakpoint_test_detour(void) {
-    g_detour_calls++;
+    g_detour_calls = g_detour_calls + 1;
 }
 
 volatile int g_target_b_calls = 0;
 volatile int g_detour_b_calls = 0;
 
 extern "C" __attribute__((noinline)) void breakpoint_test_target_b(void) {
-    g_target_b_calls++;
+    g_target_b_calls = g_target_b_calls + 1;
 }
 
 extern "C" void breakpoint_test_detour_b(void) {
-    g_detour_b_calls++;
+    g_detour_b_calls = g_detour_b_calls + 1;
 }
 
 } // namespace

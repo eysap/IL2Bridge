@@ -31,7 +31,16 @@ std::string send_and_receive(const char* socket_path, const std::string& request
     }
 
     std::string line = request + "\n";
-    write(fd, line.data(), line.size());
+    size_t sent = 0;
+    while (sent < line.size()) {
+        ssize_t n = write(fd, line.data() + sent, line.size() - sent);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) {
+            close(fd);
+            return "";
+        }
+        sent += static_cast<size_t>(n);
+    }
 
     std::string response;
     char buf[512];

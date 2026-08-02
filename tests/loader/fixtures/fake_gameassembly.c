@@ -13,6 +13,14 @@ typedef struct Il2CppObject { int dummy; } Il2CppObject;
 typedef struct Il2CppString { int length; unsigned short chars[8]; } Il2CppString;
 typedef struct Il2CppThread { int dummy; } Il2CppThread;
 
+#if defined(__clang__)
+#define IL2BRIDGE_TEST_NO_OPTIMIZE __attribute__((noinline, optnone))
+#elif defined(__GNUC__)
+#define IL2BRIDGE_TEST_NO_OPTIMIZE __attribute__((noinline, optimize("O0")))
+#else
+#define IL2BRIDGE_TEST_NO_OPTIMIZE
+#endif
+
 static Il2CppDomain g_domain;
 static Il2CppAssembly g_assemblies_storage[2] = { { 0 }, { 1 } };
 static const Il2CppAssembly* g_assemblies[2];
@@ -26,7 +34,7 @@ static Il2CppString g_string = { 4, { 'H', 0x00E9, 0xD83D, 0xDE80 } };
 // Keep this target long enough for the 14-byte trampoline patch in every
 // build configuration.
 static volatile int g_fake_method_body_calls;
-__attribute__((noinline, optimize("O0")))
+IL2BRIDGE_TEST_NO_OPTIMIZE
 static void fake_method_body(void) {
     g_fake_method_body_calls++;
     g_fake_method_body_calls++;

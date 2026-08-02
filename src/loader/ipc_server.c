@@ -821,7 +821,7 @@ IpcServer* ipc_server_start(void) {
     struct sockaddr_un addr;
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, server->socket_path, sizeof(addr.sun_path) - 1);
+    memcpy(addr.sun_path, server->socket_path, strlen(server->socket_path) + 1);
 
     if (!bind_or_reclaim_stale_socket(fd, &addr, server->socket_path)) {
         fprintf(stderr, "[il2bridge] could not bind IPC socket %s: %s\n",

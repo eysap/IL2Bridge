@@ -6,16 +6,24 @@
 
 namespace {
 
+#if defined(__clang__)
+#define IL2BRIDGE_TEST_NO_OPTIMIZE __attribute__((noinline, optnone))
+#elif defined(__GNUC__)
+#define IL2BRIDGE_TEST_NO_OPTIMIZE __attribute__((noinline, optimize("O0")))
+#else
+#define IL2BRIDGE_TEST_NO_OPTIMIZE
+#endif
+
 volatile int g_target_ran = 0;
 volatile int g_detour_ran = 0;
 void (*g_original_via_trampoline)(void) = nullptr;
 
-extern "C" __attribute__((noinline)) void trampoline_test_target(void) {
-    g_target_ran++;
+extern "C" IL2BRIDGE_TEST_NO_OPTIMIZE void trampoline_test_target(void) {
+    g_target_ran = g_target_ran + 1;
 }
 
 extern "C" void trampoline_test_detour(void) {
-    g_detour_ran++;
+    g_detour_ran = g_detour_ran + 1;
     if (g_original_via_trampoline) {
         g_original_via_trampoline();
     }
@@ -24,12 +32,12 @@ extern "C" void trampoline_test_detour(void) {
 volatile int g_target_b_ran = 0;
 volatile int g_detour_b_ran = 0;
 
-extern "C" __attribute__((noinline)) void trampoline_test_target_b(void) {
-    g_target_b_ran++;
+extern "C" IL2BRIDGE_TEST_NO_OPTIMIZE void trampoline_test_target_b(void) {
+    g_target_b_ran = g_target_b_ran + 1;
 }
 
 extern "C" void trampoline_test_detour_b(void) {
-    g_detour_b_ran++;
+    g_detour_b_ran = g_detour_b_ran + 1;
 }
 
 // RAII storage for hand-assembled relocation fixtures.
