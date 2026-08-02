@@ -14,11 +14,11 @@ typedef struct Il2CppString { int length; unsigned short chars[8]; } Il2CppStrin
 typedef struct Il2CppThread { int dummy; } Il2CppThread;
 
 #if defined(__clang__)
-#define IL2BRIDGE_TEST_NO_OPTIMIZE __attribute__((noinline, optnone))
+#define IL2BRIDGE_TEST_HOOK_TARGET __attribute__((noinline, optnone, no_sanitize("address", "undefined")))
 #elif defined(__GNUC__)
-#define IL2BRIDGE_TEST_NO_OPTIMIZE __attribute__((noinline, optimize("O0")))
+#define IL2BRIDGE_TEST_HOOK_TARGET __attribute__((noinline, optimize("O0")))
 #else
-#define IL2BRIDGE_TEST_NO_OPTIMIZE
+#define IL2BRIDGE_TEST_HOOK_TARGET
 #endif
 
 static Il2CppDomain g_domain;
@@ -31,11 +31,13 @@ static Il2CppObject g_object;
 static Il2CppString g_string = { 4, { 'H', 0x00E9, 0xD83D, 0xDE80 } };
 #endif
 
-// Keep this target long enough for the 14-byte trampoline patch in every
-// build configuration.
+// Model an external, non-instrumented IL2CPP method with a relocatable prefix
+// long enough for the 14-byte trampoline patch in every build configuration.
 static volatile int g_fake_method_body_calls;
-IL2BRIDGE_TEST_NO_OPTIMIZE
+IL2BRIDGE_TEST_HOOK_TARGET
 static void fake_method_body(void) {
+    __asm__ volatile("nop; nop; nop; nop; nop; nop; nop; nop; "
+                     "nop; nop; nop; nop; nop; nop; nop; nop");
     g_fake_method_body_calls++;
     g_fake_method_body_calls++;
     g_fake_method_body_calls--;

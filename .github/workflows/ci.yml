@@ -28,14 +28,41 @@ jobs:
             cc: gcc
             cxx: g++
             build_type: Debug
+            cflags: ""
+            cxxflags: ""
+            ldflags: ""
+          - name: GCC / Release
+            cc: gcc
+            cxx: g++
+            build_type: Release
+            cflags: ""
+            cxxflags: ""
+            ldflags: ""
           - name: Clang / Release
             cc: clang
             cxx: clang++
             build_type: Release
+            cflags: ""
+            cxxflags: ""
+            ldflags: ""
+          - name: Clang / Debug + ASan/UBSan
+            cc: clang
+            cxx: clang++
+            build_type: Debug
+            # Generated trampolines and ABI-erased handlers intentionally do
+            # not carry Clang's function-type metadata.
+            cflags: -fsanitize=address,undefined -fno-sanitize=function -fno-omit-frame-pointer
+            cxxflags: -fsanitize=address,undefined -fno-sanitize=function -fno-omit-frame-pointer
+            ldflags: -fsanitize=address,undefined
 
     env:
       CC: ${{ matrix.cc }}
       CXX: ${{ matrix.cxx }}
+      CFLAGS: ${{ matrix.cflags }}
+      CXXFLAGS: ${{ matrix.cxxflags }}
+      LDFLAGS: ${{ matrix.ldflags }}
+      ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
 
     steps:
       - name: Check out source

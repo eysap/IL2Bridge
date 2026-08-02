@@ -7,18 +7,22 @@
 namespace {
 
 #if defined(__clang__)
-#define IL2BRIDGE_TEST_NO_OPTIMIZE __attribute__((noinline, optnone))
+#define IL2BRIDGE_TEST_HOOK_TARGET __attribute__((noinline, optnone, no_sanitize("address", "undefined")))
 #elif defined(__GNUC__)
-#define IL2BRIDGE_TEST_NO_OPTIMIZE __attribute__((noinline, optimize("O0")))
+#define IL2BRIDGE_TEST_HOOK_TARGET __attribute__((noinline, optimize("O0")))
 #else
-#define IL2BRIDGE_TEST_NO_OPTIMIZE
+#define IL2BRIDGE_TEST_HOOK_TARGET
 #endif
 
 volatile int g_target_ran = 0;
 volatile int g_detour_ran = 0;
 void (*g_original_via_trampoline)(void) = nullptr;
 
-extern "C" IL2BRIDGE_TEST_NO_OPTIMIZE void trampoline_test_target(void) {
+// Real hook targets are external to the instrumented test binary. Keep this
+// synthetic prologue sanitizer-free and explicitly relocatable.
+extern "C" IL2BRIDGE_TEST_HOOK_TARGET void trampoline_test_target(void) {
+    __asm__ volatile("nop; nop; nop; nop; nop; nop; nop; nop; "
+                     "nop; nop; nop; nop; nop; nop; nop; nop");
     g_target_ran = g_target_ran + 1;
 }
 
@@ -32,7 +36,9 @@ extern "C" void trampoline_test_detour(void) {
 volatile int g_target_b_ran = 0;
 volatile int g_detour_b_ran = 0;
 
-extern "C" IL2BRIDGE_TEST_NO_OPTIMIZE void trampoline_test_target_b(void) {
+extern "C" IL2BRIDGE_TEST_HOOK_TARGET void trampoline_test_target_b(void) {
+    __asm__ volatile("nop; nop; nop; nop; nop; nop; nop; nop; "
+                     "nop; nop; nop; nop; nop; nop; nop; nop");
     g_target_b_ran = g_target_b_ran + 1;
 }
 
