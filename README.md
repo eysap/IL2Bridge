@@ -1,6 +1,9 @@
 # Il2Bridge
 
 [![CI](https://github.com/eysap/IL2Bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/eysap/IL2Bridge/actions/workflows/ci.yml)
+![C11](https://img.shields.io/badge/C-C11-A8B9CC?logo=c&logoColor=white)
+![C++20](https://img.shields.io/badge/C%2B%2B-C%2B%2B20-00599C?logo=cplusplus&logoColor=white)
+![IL2CPP](https://img.shields.io/badge/IL2CPP-runtime%20instrumentation-222222?logo=unity&logoColor=white)
 
 Il2Bridge is an experimental Linux instrumentation toolkit for Unity IL2CPP
 applications. A small C loader runs inside the target process, while a separate
