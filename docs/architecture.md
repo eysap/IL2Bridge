@@ -323,3 +323,36 @@ The loader aims to keep unsupported work local and explicit:
 This failure model does not make live code patching intrinsically safe. It makes
 the current assumptions and refusal points reviewable, testable, and visible to
 the broker.
+
+## Verification and delivery
+
+The GitHub Actions CI matrix covers complementary compiler, optimization, and
+runtime-checking profiles:
+
+| Profile | Role |
+|---|---|
+| GCC / Debug | Exercises the normal development configuration. |
+| GCC / Release | Continuously validates the profile shipped to users. |
+| Clang / Release | Detects compiler-specific assumptions in optimized code. |
+| Clang / Debug + ASan/UBSan | Detects invalid memory access, leaks, and selected classes of undefined behavior. |
+
+Every profile builds the same C loader and C++ broker, then runs three CTest
+targets: broker-focused tests, loader-focused tests, and an out-of-process
+integration test. The integration test preloads the real loader into a fixture
+process, waits for delayed `GameAssembly.so` discovery, exercises IPC and the
+resolve/hook/unhook lifecycle, and verifies clean watcher and socket shutdown.
+
+Two instrumentation boundaries are explicit in the sanitizer profile. Synthetic
+hook targets are kept sanitizer-free and start with a relocatable prologue,
+because they model native methods compiled outside the instrumented test
+binary. Clang's function-type sanitizer is also disabled: runtime-generated
+trampolines and ABI-erased handler calls intentionally have no compiler-emitted
+function metadata. AddressSanitizer, leak detection, and the remaining UBSan
+checks stay active.
+
+Delivery is a separate tag-triggered workflow. A `v*` tag must be reachable
+from `main`; the workflow rebuilds and tests with GCC Release before packaging
+the broker, loader, README, architecture document, and license. The resulting
+Linux x86-64 archive and SHA-256 checksum are attached to a generated GitHub
+Release. Ordinary CI has read-only repository access, while write access is
+limited to this release job.

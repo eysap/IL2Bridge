@@ -79,6 +79,28 @@ build/lib/libil2bridge-loader.so
 build/bin/il2bridge
 ```
 
+### Continuous integration and releases
+
+Every pull request to `main`, and every push to `main`, builds and tests the
+project in four configurations:
+
+| Configuration | Purpose |
+|---|---|
+| GCC / Debug | Development build and assertions. |
+| GCC / Release | Exact compiler and optimization profile used for releases. |
+| Clang / Release | Compiler portability under optimization. |
+| Clang / Debug + ASan/UBSan | Memory-safety and undefined-behavior checks. |
+
+Each configuration runs the broker tests, loader tests, and the end-to-end
+`LD_PRELOAD`/IPC integration fixture. The sanitizer build excludes Clang's
+function-type check because generated trampolines and ABI-erased handlers do
+not carry compiler function metadata; the remaining AddressSanitizer and
+UndefinedBehaviorSanitizer checks stay enabled.
+
+Pushing a `v*` tag reachable from `main` rebuilds the GCC Release profile, runs
+the complete test suite, and publishes a Linux x86-64 archive plus its SHA-256
+checksum as a GitHub Release.
+
 ## Quick start
 
 ### 1. Load the instrumentation library
