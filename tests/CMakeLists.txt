@@ -1,3 +1,5 @@
+find_package(Threads REQUIRED)
+
 add_executable(il2bridge_tests
     sanity_test.cpp
     broker/metadata_file_test.cpp
@@ -6,14 +8,14 @@ add_executable(il2bridge_tests
     broker/index_widths_test.cpp
     broker/metadata_decode_test.cpp
     broker/client_models_test.cpp
+    broker/target_session_test.cpp
+    broker/fake_loader.cpp
 )
-target_link_libraries(il2bridge_tests PRIVATE il2bridge_metadata il2bridge_client Catch2::Catch2WithMain)
+target_link_libraries(il2bridge_tests PRIVATE il2bridge_metadata il2bridge_client Catch2::Catch2WithMain Threads::Threads)
 add_test(NAME il2bridge_tests COMMAND il2bridge_tests)
 
 # Test fixtures include C targets in this directory scope.
 enable_language(C)
-
-find_package(Threads REQUIRED)
 
 add_library(fake_gameassembly SHARED loader/fixtures/fake_gameassembly.c)
 set_target_properties(fake_gameassembly PROPERTIES
