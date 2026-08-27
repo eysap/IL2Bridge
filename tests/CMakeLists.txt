@@ -9,6 +9,8 @@ add_executable(il2bridge_tests
     broker/metadata_decode_test.cpp
     broker/client_models_test.cpp
     broker/target_session_test.cpp
+    broker/ipc_transport_test.cpp
+    broker/target_discovery_test.cpp
     broker/fake_loader.cpp
 )
 target_link_libraries(il2bridge_tests PRIVATE il2bridge_metadata il2bridge_client Catch2::Catch2WithMain Threads::Threads)
