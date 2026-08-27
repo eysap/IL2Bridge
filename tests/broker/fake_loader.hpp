@@ -2,6 +2,7 @@
 #include <atomic>
 #include <deque>
 #include <filesystem>
+#include <map>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -36,6 +37,11 @@ public:
     // caller that reconnects an unknown number of times still gets answered.
     void always_respond(std::string payload);
 
+    // Answers any request whose first token is `command` with this payload.
+    // Takes precedence over the queue, so a caller issuing several different
+    // commands need not have its request order encoded in a test.
+    void on(std::string command, std::string payload);
+
     // The request lines received so far, in arrival order.
     std::vector<std::string> requests() const;
 
@@ -56,6 +62,7 @@ private:
     mutable std::mutex mutex_;
     std::deque<std::string> responses_;
     std::string standing_response_;
+    std::map<std::string, std::string> by_command_;
     std::vector<std::string> requests_;
 };
 

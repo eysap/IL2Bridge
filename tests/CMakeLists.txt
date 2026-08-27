@@ -11,9 +11,16 @@ add_executable(il2bridge_tests
     broker/target_session_test.cpp
     broker/ipc_transport_test.cpp
     broker/target_discovery_test.cpp
+    broker/cli_test.cpp
+    broker/cli_runner.cpp
     broker/fake_loader.cpp
 )
 target_link_libraries(il2bridge_tests PRIVATE il2bridge_metadata il2bridge_client Catch2::Catch2WithMain Threads::Threads)
+# cli_test.cpp drives the real CLI binary as a child process.
+add_dependencies(il2bridge_tests il2bridge)
+target_compile_definitions(il2bridge_tests PRIVATE
+    IL2BRIDGE_CLI_PATH="$<TARGET_FILE:il2bridge>"
+)
 add_test(NAME il2bridge_tests COMMAND il2bridge_tests)
 
 # Test fixtures include C targets in this directory scope.

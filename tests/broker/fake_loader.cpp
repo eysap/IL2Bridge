@@ -81,7 +81,10 @@ void FakeLoader::serve() {
         {
             std::lock_guard<std::mutex> lock(mutex_);
             requests_.push_back(request);
-            if (!responses_.empty()) {
+            const std::string verb = request.substr(0, request.find(' '));
+            if (auto it = by_command_.find(verb); it != by_command_.end()) {
+                response = it->second;
+            } else if (!responses_.empty()) {
                 response = std::move(responses_.front());
                 responses_.pop_front();
             } else {
@@ -104,6 +107,11 @@ void FakeLoader::serve() {
 void FakeLoader::push_response(std::string payload) {
     std::lock_guard<std::mutex> lock(mutex_);
     responses_.push_back(std::move(payload));
+}
+
+void FakeLoader::on(std::string command, std::string payload) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    by_command_[std::move(command)] = std::move(payload);
 }
 
 void FakeLoader::always_respond(std::string payload) {
