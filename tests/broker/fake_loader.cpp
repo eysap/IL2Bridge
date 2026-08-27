@@ -19,6 +19,15 @@ std::filesystem::path make_temp_directory() {
 
 FakeLoader::FakeLoader()
     : directory_(make_temp_directory()), socket_path_(directory_ / "loader.sock") {
+    bind_and_serve();
+}
+
+FakeLoader::FakeLoader(std::filesystem::path socket_path)
+    : socket_path_(std::move(socket_path)) {
+    bind_and_serve();
+}
+
+void FakeLoader::bind_and_serve() {
     listen_fd_ = socket(AF_UNIX, SOCK_STREAM, 0);
     if (listen_fd_ < 0) return;
 
@@ -42,7 +51,11 @@ FakeLoader::~FakeLoader() {
     if (worker_.joinable()) worker_.join();
     if (listen_fd_ >= 0) close(listen_fd_);
     std::error_code ignored;
-    std::filesystem::remove_all(directory_, ignored);
+    if (directory_.empty()) {
+        std::filesystem::remove(socket_path_, ignored);
+    } else {
+        std::filesystem::remove_all(directory_, ignored);
+    }
 }
 
 void FakeLoader::serve() {
@@ -71,6 +84,8 @@ void FakeLoader::serve() {
             if (!responses_.empty()) {
                 response = std::move(responses_.front());
                 responses_.pop_front();
+            } else {
+                response = standing_response_;
             }
         }
 
@@ -89,6 +104,11 @@ void FakeLoader::serve() {
 void FakeLoader::push_response(std::string payload) {
     std::lock_guard<std::mutex> lock(mutex_);
     responses_.push_back(std::move(payload));
+}
+
+void FakeLoader::always_respond(std::string payload) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    standing_response_ = std::move(payload);
 }
 
 std::vector<std::string> FakeLoader::requests() const {

@@ -18,7 +18,11 @@ namespace il2bridge::testing {
 // advertising a pid in the payload that does or doesn't match.
 class FakeLoader {
 public:
+    // Binds inside a private temporary directory.
     FakeLoader();
+    // Binds at a caller-chosen path, whose parent directory must exist. Lets a
+    // test place sockets where TargetDiscovery will look for them.
+    explicit FakeLoader(std::filesystem::path socket_path);
     ~FakeLoader();
 
     FakeLoader(const FakeLoader&) = delete;
@@ -28,14 +32,21 @@ public:
     // connection arriving with the queue empty is closed without a reply.
     void push_response(std::string payload);
 
+    // Serves this payload to every connection whose queue is empty, so a
+    // caller that reconnects an unknown number of times still gets answered.
+    void always_respond(std::string payload);
+
     // The request lines received so far, in arrival order.
     std::vector<std::string> requests() const;
 
     const std::filesystem::path& socket_path() const { return socket_path_; }
 
 private:
+    void bind_and_serve();
     void serve();
 
+    // Empty when the caller supplied the path; only an owned directory is
+    // removed on destruction.
     std::filesystem::path directory_;
     std::filesystem::path socket_path_;
     int listen_fd_ = -1;
@@ -44,6 +55,7 @@ private:
 
     mutable std::mutex mutex_;
     std::deque<std::string> responses_;
+    std::string standing_response_;
     std::vector<std::string> requests_;
 };
 
