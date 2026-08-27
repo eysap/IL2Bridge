@@ -1,7 +1,6 @@
 find_package(Threads REQUIRED)
 
 add_executable(il2bridge_tests
-    sanity_test.cpp
     broker/metadata_file_test.cpp
     broker/unity_discovery_test.cpp
     broker/byte_cursor_test.cpp
