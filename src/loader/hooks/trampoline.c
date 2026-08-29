@@ -87,25 +87,109 @@ static bool patch_relative_field(unsigned char* field, uint8_t size_bits, int64_
     }
 }
 
-// Rewrites RIP-relative operands and relative control-flow immediates in a
-// copied prologue. References move by target-tramp and must retain their
-// original encoded width.
-static bool relocate_patch_region(void* tramp, const void* target, size_t patch_len) {
-    int64_t delta = (int64_t)((uintptr_t)target - (uintptr_t)tramp);
+// Emits the rel32 form of a plain rel8 branch, or reports that none exists.
+// `EB cb` widens to `E9 cd`; `7x cb` (jcc) widens to the two-byte `0F 8x cd`.
+// loop/loope/loopne and jrcxz are encodable only as rel8, so they keep being
+// refused. `length == 2` rejects any prefixed form, whose prefix bytes this
+// re-encoding would silently drop.
+static bool widen_short_branch(const ZydisDecodedInstruction* instruction,
+                               unsigned char* opcode_out, size_t* opcode_len) {
+    if (instruction->length != 2 ||
+        instruction->opcode_map != ZYDIS_OPCODE_MAP_DEFAULT) {
+        return false;
+    }
+    if (instruction->opcode == 0xEB) {
+        opcode_out[0] = 0xE9;
+        *opcode_len = 1;
+        return true;
+    }
+    if (instruction->opcode >= 0x70 && instruction->opcode <= 0x7F) {
+        opcode_out[0] = 0x0F;
+        opcode_out[1] = (unsigned char)(instruction->opcode + 0x10);
+        *opcode_len = 2;
+        return true;
+    }
+    return false;
+}
 
+// Copies [target, target+patch_len) into `out`, rewriting every reference the
+// move invalidates, and reports the emitted length in *out_len.
+//
+// This emits instruction by instruction rather than copying the block and
+// patching it in place, because a rel8 branch cannot survive the move in its
+// original encoding: the trampoline is mapped pages away and the field holds
+// +/-127. Promoting it to rel32 changes the instruction's length, so emitted
+// offsets diverge from source offsets and every displacement has to be
+// recomputed against the address it is actually emitted at -- a single
+// target-minus-trampoline delta is only correct while the two stay aligned.
+static bool emit_relocated_region(unsigned char* out, size_t capacity, size_t* out_len,
+                                  const void* target, size_t patch_len) {
     ZydisDecoder decoder;
     ZydisDecoderInit(&decoder, ZYDIS_MACHINE_MODE_LONG_64, ZYDIS_STACK_WIDTH_64);
 
     size_t consumed = 0;
+    size_t emitted = 0;
+
     while (consumed < patch_len) {
-        unsigned char* cursor = (unsigned char*)tramp + consumed;
+        const unsigned char* source = (const unsigned char*)target + consumed;
 
         ZydisDecodedInstruction instruction;
         ZydisDecodedOperand operands[ZYDIS_MAX_OPERAND_COUNT];
-        ZyanStatus status = ZydisDecoderDecodeFull(&decoder, cursor, patch_len - consumed, &instruction, operands);
+        ZyanStatus status = ZydisDecoderDecodeFull(&decoder, source, patch_len - consumed,
+                                                   &instruction, operands);
         if (!ZYAN_SUCCESS(status)) {
             return false;
         }
+
+        int relative = -1;
+        for (int i = 0; i < 2; ++i) {
+            if (instruction.raw.imm[i].size != 0 && instruction.raw.imm[i].is_relative) {
+                relative = i;
+                break;
+            }
+        }
+
+        if (relative >= 0) {
+            uintptr_t destination = (uintptr_t)source + instruction.length +
+                                    (uintptr_t)instruction.raw.imm[relative].value.s;
+
+            // An in-region branch would have to be retargeted to the copied
+            // instruction, which this relocator does not do.
+            if (destination >= (uintptr_t)target &&
+                destination < (uintptr_t)target + patch_len) {
+                return false;
+            }
+
+            if (instruction.raw.imm[relative].size == 8) {
+                unsigned char opcode[2];
+                size_t opcode_len = 0;
+                if (!widen_short_branch(&instruction, opcode, &opcode_len)) {
+                    return false;
+                }
+                size_t widened = opcode_len + sizeof(int32_t);
+                if (emitted + widened > capacity) {
+                    return false;
+                }
+                int64_t new_imm =
+                    (int64_t)destination - (int64_t)((uintptr_t)out + emitted + widened);
+                if (new_imm < INT32_MIN || new_imm > INT32_MAX) {
+                    return false;
+                }
+                memcpy(out + emitted, opcode, opcode_len);
+                int32_t encoded = (int32_t)new_imm;
+                memcpy(out + emitted + opcode_len, &encoded, sizeof(encoded));
+                emitted += widened;
+                consumed += instruction.length;
+                continue;
+            }
+        }
+
+        if (emitted + instruction.length > capacity) {
+            return false;
+        }
+        unsigned char* cursor = out + emitted;
+        memcpy(cursor, source, instruction.length);
+        uintptr_t next_emitted = (uintptr_t)cursor + instruction.length;
 
         if (instruction.raw.disp.size != 0) {
             bool is_rip_relative = false;
@@ -117,36 +201,46 @@ static bool relocate_patch_region(void* tramp, const void* target, size_t patch_
                 }
             }
             if (is_rip_relative) {
-                int64_t new_disp = instruction.raw.disp.value + delta;
-                if (!patch_relative_field(cursor + instruction.raw.disp.offset, instruction.raw.disp.size, new_disp)) {
+                uintptr_t referent = (uintptr_t)source + instruction.length +
+                                     (uintptr_t)instruction.raw.disp.value;
+                int64_t new_disp = (int64_t)referent - (int64_t)next_emitted;
+                if (!patch_relative_field(cursor + instruction.raw.disp.offset,
+                                          instruction.raw.disp.size, new_disp)) {
                     return false;
                 }
             }
         }
 
-        // In-region branches would need retargeting to the copied instruction;
-        // reject them until that relocation is implemented.
         for (int i = 0; i < 2; ++i) {
             if (instruction.raw.imm[i].size == 0 || !instruction.raw.imm[i].is_relative) {
                 continue;
             }
-
-            uintptr_t next_instruction_addr = (uintptr_t)target + consumed + instruction.length;
-            uintptr_t destination = next_instruction_addr + (uintptr_t)instruction.raw.imm[i].value.s;
-            if (destination >= (uintptr_t)target && destination < (uintptr_t)target + patch_len) {
+            uintptr_t destination = (uintptr_t)source + instruction.length +
+                                    (uintptr_t)instruction.raw.imm[i].value.s;
+            if (destination >= (uintptr_t)target &&
+                destination < (uintptr_t)target + patch_len) {
                 return false;
             }
-
-            int64_t new_imm = instruction.raw.imm[i].value.s + delta;
-            if (!patch_relative_field(cursor + instruction.raw.imm[i].offset, instruction.raw.imm[i].size, new_imm)) {
+            int64_t new_imm = (int64_t)destination - (int64_t)next_emitted;
+            if (!patch_relative_field(cursor + instruction.raw.imm[i].offset,
+                                      instruction.raw.imm[i].size, new_imm)) {
                 return false;
             }
         }
 
+        emitted += instruction.length;
         consumed += instruction.length;
     }
 
+    *out_len = emitted;
     return true;
+}
+
+// Every rewrite this relocator performs either preserves an instruction's
+// length or widens a 2-byte rel8 branch to at most 6 bytes, so three times the
+// source region is always enough room, plus the tail jump back.
+static size_t trampoline_capacity(size_t patch_len) {
+    return patch_len * 3 + PATCH_SIZE;
 }
 
 // Uses an indirect RIP-relative jump so the trampoline tail preserves GPRs.
@@ -174,22 +268,22 @@ bool hook_install_trampoline(void* target, void* detour, HookHandle* out, void**
         return false;
     }
 
-    void* tramp = mmap_near(target, patch_len + PATCH_SIZE);
+    size_t capacity = trampoline_capacity(patch_len);
+    void* tramp = mmap_near(target, capacity);
     if (tramp == MAP_FAILED) {
         return false;
     }
 
-    memcpy(tramp, target, patch_len);
-
-    if (!relocate_patch_region(tramp, target, patch_len)) {
-        munmap(tramp, patch_len + PATCH_SIZE);
+    size_t relocated_len = 0;
+    if (!emit_relocated_region(tramp, capacity - PATCH_SIZE, &relocated_len, target, patch_len)) {
+        munmap(tramp, capacity);
         return false;
     }
 
-    write_absolute_jump((unsigned char*)tramp + patch_len, (unsigned char*)target + patch_len);
+    write_absolute_jump((unsigned char*)tramp + relocated_len, (unsigned char*)target + patch_len);
 
     if (!unprotect_code(target, patch_len)) {
-        munmap(tramp, patch_len + PATCH_SIZE);
+        munmap(tramp, capacity);
         return false;
     }
 
@@ -197,6 +291,7 @@ bool hook_install_trampoline(void* target, void* detour, HookHandle* out, void**
     entry.target = target;
     entry.detour = detour;
     entry.trampoline = tramp;
+    entry.trampoline_len = capacity;
     entry.type = HOOK_TYPE_TRAMPOLINE;
     entry.mode = HOOK_MODE_REPLACE;
     memcpy(entry.original, target, patch_len);
@@ -214,7 +309,7 @@ bool hook_install_trampoline(void* target, void* detour, HookHandle* out, void**
         if (trampoline_out) {
             *trampoline_out = NULL;
         }
-        munmap(tramp, patch_len + PATCH_SIZE);
+        munmap(tramp, capacity);
         return false;
     }
 
@@ -244,27 +339,28 @@ bool hook_install_counter_probe(void* target, HookHandle* out) {
         return false;
     }
 
-    void* tramp = mmap_near(target, patch_len + PATCH_SIZE);
+    size_t capacity = trampoline_capacity(patch_len);
+    void* tramp = mmap_near(target, capacity);
     if (tramp == MAP_FAILED) {
         return false;
     }
-    memcpy(tramp, target, patch_len);
-    if (!relocate_patch_region(tramp, target, patch_len)) {
-        munmap(tramp, patch_len + PATCH_SIZE);
+    size_t relocated_len = 0;
+    if (!emit_relocated_region(tramp, capacity - PATCH_SIZE, &relocated_len, target, patch_len)) {
+        munmap(tramp, capacity);
         return false;
     }
-    write_absolute_jump((unsigned char*)tramp + patch_len, (unsigned char*)target + patch_len);
+    write_absolute_jump((unsigned char*)tramp + relocated_len, (unsigned char*)target + patch_len);
 
     CounterProbeState* state = calloc(1, sizeof(*state));
     if (!state) {
-        munmap(tramp, patch_len + PATCH_SIZE);
+        munmap(tramp, capacity);
         return false;
     }
 
     long page_size = sysconf(_SC_PAGESIZE);
     if (page_size <= 0) {
         free(state);
-        munmap(tramp, patch_len + PATCH_SIZE);
+        munmap(tramp, capacity);
         return false;
     }
     unsigned char* stub = mmap(NULL, (size_t)page_size,
@@ -272,7 +368,7 @@ bool hook_install_counter_probe(void* target, HookHandle* out) {
                                MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (stub == MAP_FAILED) {
         free(state);
-        munmap(tramp, patch_len + PATCH_SIZE);
+        munmap(tramp, capacity);
         return false;
     }
 
@@ -292,7 +388,7 @@ bool hook_install_counter_probe(void* target, HookHandle* out) {
     if (!unprotect_code(target, patch_len)) {
         munmap(stub, (size_t)page_size);
         free(state);
-        munmap(tramp, patch_len + PATCH_SIZE);
+        munmap(tramp, capacity);
         return false;
     }
 
@@ -300,6 +396,7 @@ bool hook_install_counter_probe(void* target, HookHandle* out) {
     entry.target = target;
     entry.detour = stub;
     entry.trampoline = tramp;
+    entry.trampoline_len = capacity;
     entry.type = HOOK_TYPE_TRAMPOLINE;
     entry.mode = HOOK_MODE_AROUND;
     entry.probe_state = state;
@@ -311,7 +408,7 @@ bool hook_install_counter_probe(void* target, HookHandle* out) {
     if (!hook_registry_add(&entry, out)) {
         munmap(stub, (size_t)page_size);
         free(state);
-        munmap(tramp, patch_len + PATCH_SIZE);
+        munmap(tramp, capacity);
         return false;
     }
 
@@ -351,7 +448,7 @@ bool hook_uninstall_trampoline(HookHandle handle) {
     }
 
     if (entry->trampoline) {
-        munmap(entry->trampoline, (size_t)entry->original_len + PATCH_SIZE);
+        munmap(entry->trampoline, entry->trampoline_len);
     }
 
     if (entry->owned_detour) {

@@ -330,14 +330,84 @@ TEST_CASE("a rel32 call outside the patch window is retargeted, not left danglin
     REQUIRE(hook_uninstall_trampoline(handle));
 }
 
-TEST_CASE("an 8-bit relative branch is refused rather than mis-relocated", "[hooks_trampoline]") {
-    // 0:  jmp short +0x0D      -> offset 15, outside the patch window, but the
-    //                             trampoline sits pages away and the rel8 field
-    //                             cannot encode that distance.
+// A rel8 field holds +/-127 and the trampoline is mapped pages away, so a short
+// branch cannot survive the move in its original encoding. Refusing it used to
+// cost roughly a third of a real IL2CPP binary's methods -- measured at 35.8% of
+// Core.dll in the game this loader was written for -- because the compiler emits
+// a short jump inside the first 14 bytes of very ordinary code. The relocator
+// promotes these to the rel32 form of the same branch instead.
+TEST_CASE("an unconditional 8-bit branch is promoted to rel32, not refused", "[hooks_trampoline]") {
+    // 0:  jmp short +0x0D      -> offset 15, outside the 14-byte patch window
+    // 15: mov eax, 42; ret
     static const unsigned char code[] = {
         0xEB, 0x0D,
         0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
         0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+        0xB8, 0x2A, 0x00, 0x00, 0x00,
+        0xC3,
+    };
+    ExecutableBuffer buffer(code, sizeof(code));
+    auto callable = reinterpret_cast<IntFn>(buffer.addr);
+    REQUIRE(callable() == 42);
+
+    HookHandle handle{};
+    REQUIRE(hook_install_counter_probe(buffer.addr, &handle));
+
+    // The promoted jump must still land on the callee in the original buffer.
+    REQUIRE(callable() == 42);
+
+    uint64_t count = 0;
+    REQUIRE(hook_probe_hit_count(handle, &count));
+    REQUIRE(count == 1);
+    REQUIRE(hook_uninstall_trampoline(handle));
+}
+
+TEST_CASE("a conditional 8-bit branch is promoted and still taken", "[hooks_trampoline]") {
+    // The shape that blocked the real target: a short conditional branch at the
+    // top of a setter, well inside the patch window.
+    //
+    //  0: mov eax, 0        (5)
+    //  5: test eax, eax     (2)  -> ZF = 1
+    //  7: je +0x0B          (2)  -> offset 20, outside the window
+    //  9: nop x5            (5)  -> whole-instruction boundary lands at 14
+    // 14: mov eax, 7; ret        <- fall-through, i.e. the branch was lost
+    // 20: mov eax, 42; ret       <- branch taken and correctly retargeted
+    static const unsigned char code[] = {
+        0xB8, 0x00, 0x00, 0x00, 0x00,
+        0x85, 0xC0,
+        0x74, 0x0B,
+        0x90, 0x90, 0x90, 0x90, 0x90,
+        0xB8, 0x07, 0x00, 0x00, 0x00,
+        0xC3,
+        0xB8, 0x2A, 0x00, 0x00, 0x00,
+        0xC3,
+    };
+    ExecutableBuffer buffer(code, sizeof(code));
+    auto callable = reinterpret_cast<IntFn>(buffer.addr);
+    REQUIRE(callable() == 42);
+
+    HookHandle handle{};
+    REQUIRE(hook_install_counter_probe(buffer.addr, &handle));
+
+    // 7 would mean the relocated branch fell through instead of being taken.
+    REQUIRE(callable() == 42);
+
+    REQUIRE(hook_uninstall_trampoline(handle));
+}
+
+TEST_CASE("an 8-bit branch with no rel32 encoding is still refused", "[hooks_trampoline]") {
+    // jrcxz, like loop/loope/loopne, exists only in its rel8 form: there is no
+    // longer encoding to promote it to, so it must keep being refused.
+    //
+    // 0: xor rcx, rcx      (3)
+    // 3: jrcxz +0x0F       (2)  -> offset 20, outside the window
+    // 5: nop x9            (9)  -> window closes at 14
+    static const unsigned char code[] = {
+        0x48, 0x31, 0xC9,
+        0xE3, 0x0F,
+        0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+        0xB8, 0x07, 0x00, 0x00, 0x00,
+        0xC3,
         0xB8, 0x2A, 0x00, 0x00, 0x00,
         0xC3,
     };
