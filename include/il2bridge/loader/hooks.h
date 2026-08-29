@@ -32,6 +32,9 @@ typedef struct {
     void* target;
     void* detour;
     void* trampoline;      // only meaningful for HOOK_TYPE_TRAMPOLINE
+    size_t trampoline_len; // mapped length of trampoline; not derivable from
+                           // original_len, because relocation may grow the
+                           // copied instructions (rel8 promoted to rel32)
     HookType type;
     HookMode mode;
     void* probe_state;     // owned by an around hook, otherwise NULL
@@ -84,8 +87,13 @@ IL2BRIDGE_LOADER_API bool hook_uninstall_breakpoint(HookHandle handle);
 // runs on the very first call already has a valid original to chain to. It is
 // set to NULL on entry and left NULL on every failure path.
 //
-// Current limits: in-region relative branches and rel8 relocation are
-// rejected, function boundaries are not known, and the target patch is not
+// Relocation promotes a short branch that cannot survive the move to the
+// rel32 form of the same branch, so an ordinary `jmp short`/`jcc short` in the
+// patched prologue is not an obstacle.
+//
+// Current limits: branches whose destination lands inside the patch window are
+// rejected, so are loop/loope/loopne and jrcxz, which have no rel32 encoding to
+// widen into; function boundaries are not known; and the target patch is not
 // atomic. Callers must treat installation/removal in a running multithreaded
 // process as a coordinated operation.
 IL2BRIDGE_LOADER_API bool hook_install_trampoline(void* target, void* detour, HookHandle* out,
