@@ -101,9 +101,11 @@ ELF constructor
 
 Discovery is passive: the watcher never loads `GameAssembly.so` and does not
 call an IL2CPP initialization routine. Polling backs off from 5 ms to 100 ms
-and stops after 60 seconds if the module was never observed. Once observed, the
-complete grace period is honored before publishing readiness. The default is
-five seconds and can be adjusted with `IL2BRIDGE_WATCHER_GRACE_MS`.
+and stops if the module was never observed within a configurable timeout,
+adjustable with `IL2BRIDGE_WATCHER_TIMEOUT_MS` (default 60 seconds; `0`
+disables the timeout). Once observed, the complete grace period is honored
+before publishing readiness. The default is five seconds and can be adjusted
+with `IL2BRIDGE_WATCHER_GRACE_MS`.
 
 On a clean unload, the destructor requests watcher shutdown, joins the watcher,
 stops and joins the IPC thread, closes its descriptors, and unlinks the socket.
@@ -176,7 +178,7 @@ All hook mutations execute on the single IPC thread. This is an architectural
 invariant: registry allocation and code patching are single-writer operations.
 Target threads and the SIGTRAP handler only perform published read-side lookups.
 
-The registry contains 256 append-only slots. Removal atomically disables an
+The registry contains 1,024 append-only slots. Removal atomically disables an
 entry, but its slot is not reused during that process lifetime. This makes stale
 handles fail predictably and avoids ABA-style slot reuse.
 
