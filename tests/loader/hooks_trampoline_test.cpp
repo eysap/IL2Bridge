@@ -380,9 +380,17 @@ TEST_CASE("a trampoline hook refuses a target already claimed by a breakpoint ho
 }
 
 TEST_CASE("a rel32 that cannot absorb the trampoline delta is refused", "[hooks_trampoline]") {
-    // call rel32 at the extremes of the encodable range. The trampoline lands
-    // within +/-2 GiB of the target but on a side chosen by the allocator, so
-    // exactly one of these two directions must overflow its 32-bit field.
+    // call rel32 at the extremes of the encodable range, installed at the SAME
+    // target address in sequence rather than at two independently-allocated
+    // addresses. mmap_near's candidate search always tries the same side
+    // first for a given target page, so reusing one address means both
+    // installs see the same trampoline placement (the second install reuses
+    // the exact mapping the first one just freed) -- whichever extreme sits
+    // on the "wrong" side of that one placement must overflow. Two unrelated
+    // ExecutableBuffer allocations do not give this guarantee: each is placed
+    // independently by the OS/allocator, so nothing stops both from landing
+    // their trampolines on opposite sides of their own targets, in which case
+    // neither overflows and this test fails intermittently.
     auto make_fixture = [](int32_t displacement) {
         std::array<unsigned char, 14> code{};
         code[0] = 0xE8;
@@ -394,19 +402,23 @@ TEST_CASE("a rel32 that cannot absorb the trampoline delta is refused", "[hooks_
 
     const auto forward = make_fixture(INT32_MAX - 16);
     const auto backward = make_fixture(INT32_MIN + 16);
-    ExecutableBuffer forward_buffer(forward.data(), forward.size());
-    ExecutableBuffer backward_buffer(backward.data(), backward.size());
+    ExecutableBuffer buffer(forward.data(), forward.size());
 
     // These fixtures branch into nowhere and are never called, only relocated.
     HookHandle forward_handle{};
-    HookHandle backward_handle{};
     const bool forward_installed =
-        hook_install_trampoline(forward_buffer.addr, (void*)trampoline_test_detour_b, &forward_handle, nullptr);
-    const bool backward_installed =
-        hook_install_trampoline(backward_buffer.addr, (void*)trampoline_test_detour_b, &backward_handle, nullptr);
+        hook_install_trampoline(buffer.addr, (void*)trampoline_test_detour_b, &forward_handle, nullptr);
+    if (forward_installed) {
+        REQUIRE(hook_uninstall_trampoline(forward_handle));
+    }
 
-    if (forward_installed) REQUIRE(hook_uninstall_trampoline(forward_handle));
-    if (backward_installed) REQUIRE(hook_uninstall_trampoline(backward_handle));
+    std::memcpy(buffer.addr, backward.data(), backward.size());
+    HookHandle backward_handle{};
+    const bool backward_installed =
+        hook_install_trampoline(buffer.addr, (void*)trampoline_test_detour_b, &backward_handle, nullptr);
+    if (backward_installed) {
+        REQUIRE(hook_uninstall_trampoline(backward_handle));
+    }
 
     REQUIRE_FALSE((forward_installed && backward_installed));
 }
