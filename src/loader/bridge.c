@@ -155,6 +155,31 @@ bool bridge_init(void* module_handle) {
     return result;
 }
 
+void* bridge_module_handle(void) {
+    pthread_mutex_lock(&g_init_mutex);
+    void* handle = g_module_handle;
+    pthread_mutex_unlock(&g_init_mutex);
+    return handle;
+}
+
+Il2CppThread* bridge_thread_attach(void) {
+    if (!bridge_require_capability(BRIDGE_CAPABILITY_THREADS)) {
+        return NULL;
+    }
+    Il2CppDomain* domain = p_domain_get();
+    if (!domain) {
+        return NULL;
+    }
+    return p_thread_attach(domain);
+}
+
+void bridge_thread_detach(Il2CppThread* thread) {
+    if (!thread || !bridge_require_capability(BRIDGE_CAPABILITY_THREADS)) {
+        return;
+    }
+    p_thread_detach(thread);
+}
+
 bool bridge_require_capability(BridgeCapability capability) {
     if (capability < 0 || capability >= BRIDGE_CAPABILITY_COUNT) {
         return false;

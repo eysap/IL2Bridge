@@ -145,3 +145,25 @@ TEST_CASE("resolution cache avoids re-resolving on repeated lookups", "[bridge]"
 
     REQUIRE(count_after_second == count_after_first);
 }
+
+TEST_CASE("the module handle is published after initialisation", "[bridge]") {
+    DlHandleGuard guard{open_fake_gameassembly()};
+    REQUIRE(guard.handle != nullptr);
+    REQUIRE(bridge_init(guard.handle));
+
+    REQUIRE(bridge_module_handle() == guard.handle);
+}
+
+TEST_CASE("threads can be attached and detached when the capability exists", "[bridge]") {
+    DlHandleGuard guard{open_fake_gameassembly()};
+    REQUIRE(guard.handle != nullptr);
+    REQUIRE(bridge_init(guard.handle));
+    REQUIRE(bridge_require_capability(BRIDGE_CAPABILITY_THREADS));
+
+    Il2CppThread* thread = bridge_thread_attach();
+    REQUIRE(thread != nullptr);
+    bridge_thread_detach(thread);
+
+    // A null argument must be ignored rather than dereferenced.
+    bridge_thread_detach(nullptr);
+}
