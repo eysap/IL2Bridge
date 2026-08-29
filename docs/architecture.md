@@ -203,7 +203,7 @@ returns to the original body after the patch.
 The transport rejects a target when:
 
 - instruction decoding fails;
-- the safe patch region exceeds the 16-byte saved-instruction capacity;
+- the safe patch region exceeds the 32-byte saved-instruction capacity;
 - a displacement cannot be represented after relocation;
 - a relative branch lands inside the copied patch region;
 - executable memory cannot be mapped at a suitable address.
@@ -260,6 +260,37 @@ operations have a two-second timeout, request lines are bounded, and writes use
 
 The broker scans both XDG and legacy `/tmp` paths during migration and
 deduplicates targets by session identity.
+
+## Embedding the loader
+
+The IPC boundary above is not the only way to consume the loader. A second
+shared object preloaded into the same process can link against the loader's
+public surface directly and drive it in-process, without a broker or a
+socket. That surface is exactly the set of symbols marked
+`IL2BRIDGE_LOADER_API`; everything else remains hidden.
+
+Readiness works the same way for an in-process consumer as it does for the
+watcher's own internal use: `late_init_add_ready_callback` queues a
+subscriber, and if readiness has already fired by the time it registers, the
+callback runs before the registration call returns. A late-loaded embedder
+therefore never needs to poll for `GameAssembly.so` availability.
+
+`hook_install_trampoline` hands back the callable original-body trampoline
+before it patches the target. An embedder that installs a detour meant to
+chain to the original can rely on that pointer being valid from the very
+first call the detour receives, including a call that races the return from
+installation.
+
+Hook registry slots follow the same append-only discipline documented above
+regardless of caller: an in-process consumer installs a hook once and gates
+its own dispatch rather than removing and reinstalling to change behavior,
+since a freed slot is never handed back out.
+
+Diagnostics are redirected the same way for either consumption mode.
+`il2bridge_set_log_sink` replaces the destination for the loader's log lines;
+this matters in particular for an embedder whose host application has
+already taken over file descriptor 2, where the loader's default of writing
+to stderr would otherwise be lost or interleaved with unrelated output.
 
 ## Event model
 

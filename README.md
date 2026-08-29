@@ -38,6 +38,8 @@ instrument.
 - A fixed-capacity event ring with resumable sequence numbers and loss
   reporting.
 - Unit tests plus an end-to-end `LD_PRELOAD` integration fixture.
+- In-process embedding by a second consumer, with a replaceable log sink and
+  multi-subscriber readiness.
 
 ## Architecture
 
