@@ -68,6 +68,36 @@ struct ExecutableBuffer {
 // Builds an executable fixture that is callable as int(*)(void).
 using IntFn = int (*)();
 
+// A prologue whose whole-instruction boundary lands at 17 bytes: six pushes
+// (10 bytes) then `sub rsp, 0x88`, which needs an imm32 and so occupies 7.
+// This is a real IL2CPP method shape, not a synthetic worst case.
+const unsigned char kPrologue17[] = {
+    0x55,                                     // push rbp
+    0x41, 0x57,                               // push r15
+    0x41, 0x56,                               // push r14
+    0x41, 0x55,                               // push r13
+    0x41, 0x54,                               // push r12
+    0x53,                                     // push rbx
+    0x48, 0x81, 0xEC, 0x88, 0x00, 0x00, 0x00, // sub rsp, 0x88   -> boundary at 17
+    0x48, 0x81, 0xC4, 0x88, 0x00, 0x00, 0x00, // add rsp, 0x88
+    0x5B,                                     // pop rbx
+    0x41, 0x5C,                               // pop r12
+    0x41, 0x5D,                               // pop r13
+    0x41, 0x5E,                               // pop r14
+    0x41, 0x5F,                               // pop r15
+    0x5D,                                     // pop rbp
+    0xB8, 0x2A, 0x00, 0x00, 0x00,             // mov eax, 42
+    0xC3,                                     // ret
+};
+
+volatile int g_prologue17_detour_ran = 0;
+IntFn g_prologue17_original = nullptr;
+
+extern "C" int prologue17_detour(void) {
+    g_prologue17_detour_ran = g_prologue17_detour_ran + 1;
+    return g_prologue17_original ? g_prologue17_original() : -1;
+}
+
 } // namespace
 
 TEST_CASE("installing a trampoline hook redirects execution and preserves a callable original", "[hooks_trampoline]") {
@@ -241,20 +271,6 @@ TEST_CASE("a prologue that fails to decode is rejected", "[hooks_trampoline]") {
     REQUIRE_FALSE(hook_install_counter_probe(buffer.addr, &handle));
 }
 
-TEST_CASE("a prologue longer than the saved original bytes is rejected", "[hooks_trampoline]") {
-    // Two 10-byte movabs: the first instruction boundary at or past 14 bytes
-    // lands at 20, more than HookEntry::original can hold.
-    static const unsigned char code[] = {
-        0x48, 0xB8, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, // movabs rax, imm64
-        0x48, 0xBB, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, // movabs rbx, imm64
-        0xC3,
-    };
-    ExecutableBuffer buffer(code, sizeof(code));
-
-    HookHandle handle{};
-    REQUIRE_FALSE(hook_install_trampoline(buffer.addr, (void*)trampoline_test_detour_b, &handle));
-}
-
 // --- relocation -------------------------------------------------------------
 
 TEST_CASE("a RIP-relative load still reads the original data after relocation",
@@ -393,4 +409,27 @@ TEST_CASE("a rel32 that cannot absorb the trampoline delta is refused", "[hooks_
     if (backward_installed) REQUIRE(hook_uninstall_trampoline(backward_handle));
 
     REQUIRE_FALSE((forward_installed && backward_installed));
+}
+
+TEST_CASE("a 17-byte prologue is accepted and its original stays callable", "[hooks_trampoline]") {
+    hook_registry_reset_for_testing();
+    g_prologue17_detour_ran = 0;
+    g_prologue17_original = nullptr;
+
+    ExecutableBuffer buffer(kPrologue17, sizeof(kPrologue17));
+    IntFn target = (IntFn)buffer.addr;
+    REQUIRE(target() == 42);
+
+    HookHandle handle{};
+    REQUIRE(hook_install_trampoline(buffer.addr, (void*)prologue17_detour, &handle));
+
+    g_prologue17_original = (IntFn)hook_manager_get_trampoline(handle);
+    REQUIRE(g_prologue17_original != nullptr);
+
+    REQUIRE(target() == 42);
+    REQUIRE(g_prologue17_detour_ran == 1);
+
+    REQUIRE(hook_uninstall_trampoline(handle));
+    REQUIRE(target() == 42);
+    REQUIRE(g_prologue17_detour_ran == 1);
 }
