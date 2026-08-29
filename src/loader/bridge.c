@@ -1,4 +1,5 @@
 #include "il2bridge/loader/bridge.h"
+#include "il2bridge/loader/log.h"
 #include <dlfcn.h>
 #include <pthread.h>
 #include <stddef.h>
@@ -65,8 +66,7 @@ static CapabilityState g_capability_states[BRIDGE_CAPABILITY_COUNT];
         target = (typeof(target))dlsym((handle), (symbol_name));    \
         if (!target) {                                              \
             const char* error = dlerror();                          \
-            fprintf(stderr,                                         \
-                    "[il2bridge] missing required symbol %s: %s\n", \
+            il2bridge_log("missing required symbol %s: %s",         \
                     (symbol_name),                                  \
                     error ? error : "unknown dlsym error");         \
             return false;                                           \
@@ -93,8 +93,7 @@ static pthread_mutex_t g_init_mutex = PTHREAD_MUTEX_INITIALIZER;
     do {                                                                      \
         target = (typeof(target))dlsym(g_module_handle, (symbol_name));       \
         if (!target) {                                                        \
-            fprintf(stderr,                                                   \
-                    "[il2bridge] capability %s unavailable: missing %s\n",   \
+            il2bridge_log("capability %s unavailable: missing %s",            \
                     (capability_name), (symbol_name));                         \
             return false;                                                     \
         }                                                                     \

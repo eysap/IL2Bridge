@@ -11,6 +11,7 @@ add_library(il2bridge-loader SHARED
     discovery.c
     bridge.c
     events.c
+    log.c
     hooks/registry.c
     hooks/breakpoint.c
     hooks/trampoline.c

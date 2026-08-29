@@ -113,21 +113,25 @@ TEST_CASE("log-1string-arg reports a null string without dereferencing it", "[ha
     REQUIRE(output == "[il2bridge] log-1string-arg: null string\n");
 }
 
-TEST_CASE("log-1string-arg clamps an absurd length instead of reading unbounded memory", "[handlers]") {
+TEST_CASE("log-1string-arg bounds an absurd length instead of reading unbounded memory", "[handlers]") {
     const HandlerEntry* entry = handler_lookup("log-1string-arg");
     REQUIRE(entry != nullptr);
     auto handler = reinterpret_cast<void (*)(void*)>(entry->function_pointer);
 
-    // Mirrors the handler's private clamp.
-    constexpr size_t kClampBoundary = 65536;
+    constexpr size_t kBackingChars = 65536;
 
-    auto buf = make_fake_string(/*claimed_length=*/1'000'000'000, kClampBoundary, /*fill_char=*/'X');
+    auto buf = make_fake_string(/*claimed_length=*/1'000'000'000, kBackingChars, /*fill_char=*/'X');
     auto* str = reinterpret_cast<FakeIl2CppStringLayout*>(buf.data());
 
     std::string output = capture_stderr([&]() { handler(str); });
 
-    std::string expected = "[il2bridge] " + std::string(kClampBoundary, 'X') + "\n";
-    REQUIRE(output == expected);
+    // The line is assembled into a bounded buffer and truncated to fit: it is
+    // the prefix followed by 'X' runs and a newline, never the full length.
+    REQUIRE(output.rfind("[il2bridge] X", 0) == 0);
+    REQUIRE(output.back() == '\n');
+    REQUIRE(output.size() < 512);
+    const std::string body = output.substr(std::strlen("[il2bridge] "), output.size() - std::strlen("[il2bridge] ") - 1);
+    REQUIRE(body.find_first_not_of('X') == std::string::npos);
 }
 
 TEST_CASE("skip-return-void can be called through its pointer without crashing", "[handlers]") {

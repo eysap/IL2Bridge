@@ -1,5 +1,6 @@
+#include "il2bridge/loader/log.h"
 #include <stdint.h>
-#include <stdio.h>
+#include <string.h>
 
 typedef struct Il2CppString Il2CppString;
 
@@ -14,9 +15,13 @@ typedef struct {
 // Bounds reads if the layout or object is invalid.
 #define IL2BRIDGE_MAX_LOGGED_STRING_CHARS 65536
 
+// Upper bound on the assembled message text. Longer strings are truncated to
+// fit rather than heap-allocating.
+#define IL2BRIDGE_LOG_STRING_BUFFER 480
+
 void handler_log_1string_arg(Il2CppString* message) {
     if (!message) {
-        fprintf(stderr, "[il2bridge] log-1string-arg: null string\n");
+        il2bridge_log("log-1string-arg: null string");
         return;
     }
 
@@ -28,14 +33,13 @@ void handler_log_1string_arg(Il2CppString* message) {
         count = IL2BRIDGE_MAX_LOGGED_STRING_CHARS;
     }
 
-    fprintf(stderr, "[il2bridge] ");
-    for (int32_t i = 0; i < count; ++i) {
+    char buffer[IL2BRIDGE_LOG_STRING_BUFFER];
+    size_t used = 0;
+    for (int32_t i = 0; i < count && used + 1 < sizeof(buffer); ++i) {
         uint16_t c = str->chars[i];
-        if (c < 0x80) {
-            fputc((char)c, stderr);
-        } else {
-            fputc('?', stderr);
-        }
+        buffer[used++] = (c < 0x80) ? (char)c : '?';
     }
-    fputc('\n', stderr);
+    buffer[used] = '\0';
+
+    il2bridge_log("%s", buffer);
 }
