@@ -5,6 +5,7 @@
 
 #include "il2bridge/loader/late_init.h"
 #include "il2bridge/loader/discovery.h"
+#include "il2bridge/loader/log.h"
 #include <dlfcn.h>
 #include <errno.h>
 #include <pthread.h>
@@ -58,8 +59,8 @@ static long configured_grace_milliseconds(void) {
     errno = 0;
     long parsed = strtol(value, &end, 10);
     if (errno != 0 || *end != '\0' || parsed < 0 || parsed > kWatcherTimeoutMilliseconds) {
-        fprintf(stderr, "[il2bridge] warning: invalid IL2BRIDGE_WATCHER_GRACE_MS='%s'; using %d ms\n",
-                value, kDefaultGraceMilliseconds);
+        il2bridge_log("warning: invalid IL2BRIDGE_WATCHER_GRACE_MS='%s'; using %d ms",
+                      value, kDefaultGraceMilliseconds);
         return kDefaultGraceMilliseconds;
     }
     return parsed;
@@ -84,7 +85,7 @@ static void publish_ready(void) {
     pthread_mutex_unlock(&g_state_mutex);
 
     if (count == 0) {
-        fprintf(stderr, "[il2bridge] warning: GameAssembly.so became ready with no subscriber\n");
+        il2bridge_log("warning: GameAssembly.so became ready with no subscriber");
         return;
     }
     for (int i = 0; i < count; ++i) {
@@ -121,8 +122,8 @@ static FindResult find_gameassembly(bool log_handle_failure) {
     if (!handle) {
         if (log_handle_failure) {
             const char* error = dlerror();
-            fprintf(stderr, "[il2bridge] warning: GameAssembly.so is mapped but RTLD_NOLOAD failed: %s\n",
-                    error ? error : "unknown error");
+            il2bridge_log("warning: GameAssembly.so is mapped but RTLD_NOLOAD failed: %s",
+                          error ? error : "unknown error");
         }
         return FIND_RETRY;
     }
@@ -139,7 +140,7 @@ static FindResult find_gameassembly(bool log_handle_failure) {
         return FIND_FOUND;
     }
 
-    fprintf(stderr, "[il2bridge] found mapped GameAssembly.so at '%s'\n", path);
+    il2bridge_log("found mapped GameAssembly.so at '%s'", path);
     return FIND_FOUND;
 }
 
@@ -180,7 +181,7 @@ static void* watcher_main(void* unused) {
             clock_gettime(CLOCK_MONOTONIC, &now);
             if (elapsed_milliseconds(&found_at, &now) >= grace_ms) {
                 if (grace_ms > 0) {
-                    fprintf(stderr, "[il2bridge] startup grace period complete after %ld ms\n", grace_ms);
+                    il2bridge_log("startup grace period complete after %ld ms", grace_ms);
                 }
                 publish_ready();
                 return NULL;
@@ -193,8 +194,8 @@ static void* watcher_main(void* unused) {
         // The timeout bounds discovery only. Once the module is found, always
         // honor the complete grace period even if it was mapped near 60 s.
         if (result != FIND_FOUND && elapsed_ms >= kWatcherTimeoutMilliseconds) {
-            fprintf(stderr, "[il2bridge] warning: GameAssembly.so watcher timed out after %d seconds\n",
-                    kWatcherTimeoutMilliseconds / 1000);
+            il2bridge_log("warning: GameAssembly.so watcher timed out after %d seconds",
+                          kWatcherTimeoutMilliseconds / 1000);
             return NULL;
         }
 
@@ -213,7 +214,7 @@ static void start_watcher_once(void) {
     pthread_t thread;
     int rc = pthread_create(&thread, NULL, watcher_main, NULL);
     if (rc != 0) {
-        fprintf(stderr, "[il2bridge] warning: failed to start GameAssembly.so watcher: %s\n", strerror(rc));
+        il2bridge_log("warning: failed to start GameAssembly.so watcher: %s", strerror(rc));
         return;
     }
 
