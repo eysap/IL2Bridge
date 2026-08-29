@@ -8,7 +8,11 @@
 extern "C" {
 #endif
 
-#define HOOK_REGISTRY_CAPACITY 256
+// Slots are allocated monotonically and never reused: disabling an entry frees
+// no slot. Reuse would require a generation counter inside HookHandle, which is
+// encoded on the IPC wire as <pid>:<start>:<slot>. A long-lived consumer should
+// install a hook once and gate its own dispatch rather than reinstalling.
+#define HOOK_REGISTRY_CAPACITY 1024
 
 typedef enum {
     HOOK_TYPE_BREAKPOINT,
@@ -52,6 +56,10 @@ IL2BRIDGE_LOADER_API const HookEntry* hook_registry_get(HookHandle handle);
 
 // Finds an enabled entry by target address. This lookup is signal-safe.
 IL2BRIDGE_LOADER_API const HookEntry* hook_registry_find_by_address(void* address);
+
+// Number of slots allocated so far, disabled entries included. Reaching
+// HOOK_REGISTRY_CAPACITY is permanent for the life of the process.
+IL2BRIDGE_LOADER_API uint32_t hook_registry_used(void);
 
 // Test-only registry reset.
 IL2BRIDGE_LOADER_API void hook_registry_reset_for_testing(void);
