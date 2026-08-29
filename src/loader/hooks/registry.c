@@ -1,4 +1,5 @@
 #include "il2bridge/loader/hooks.h"
+#include "il2bridge/loader/log.h"
 
 static HookEntry g_entries[HOOK_REGISTRY_CAPACITY];
 
@@ -12,6 +13,13 @@ bool hook_registry_add(const HookEntry* entry, HookHandle* out) {
 
     uint32_t slot = __atomic_load_n(&g_published_count, __ATOMIC_RELAXED);
     if (slot >= HOOK_REGISTRY_CAPACITY) {
+        static bool reported = false;
+        if (!reported) {
+            reported = true;
+            il2bridge_log("error: hook registry exhausted at %d slots; "
+                          "slots are never reused, install hooks once and gate dispatch",
+                          HOOK_REGISTRY_CAPACITY);
+        }
         return false;
     }
 
@@ -65,4 +73,8 @@ const HookEntry* hook_registry_find_by_address(void* address) {
 
 void hook_registry_reset_for_testing(void) {
     __atomic_store_n(&g_published_count, 0, __ATOMIC_RELAXED);
+}
+
+uint32_t hook_registry_used(void) {
+    return __atomic_load_n(&g_published_count, __ATOMIC_ACQUIRE);
 }

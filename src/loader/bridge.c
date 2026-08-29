@@ -1,4 +1,5 @@
 #include "il2bridge/loader/bridge.h"
+#include "il2bridge/loader/log.h"
 #include <dlfcn.h>
 #include <pthread.h>
 #include <stddef.h>
@@ -65,8 +66,7 @@ static CapabilityState g_capability_states[BRIDGE_CAPABILITY_COUNT];
         target = (typeof(target))dlsym((handle), (symbol_name));    \
         if (!target) {                                              \
             const char* error = dlerror();                          \
-            fprintf(stderr,                                         \
-                    "[il2bridge] missing required symbol %s: %s\n", \
+            il2bridge_log("missing required symbol %s: %s",         \
                     (symbol_name),                                  \
                     error ? error : "unknown dlsym error");         \
             return false;                                           \
@@ -93,8 +93,7 @@ static pthread_mutex_t g_init_mutex = PTHREAD_MUTEX_INITIALIZER;
     do {                                                                      \
         target = (typeof(target))dlsym(g_module_handle, (symbol_name));       \
         if (!target) {                                                        \
-            fprintf(stderr,                                                   \
-                    "[il2bridge] capability %s unavailable: missing %s\n",   \
+            il2bridge_log("capability %s unavailable: missing %s",            \
                     (capability_name), (symbol_name));                         \
             return false;                                                     \
         }                                                                     \
@@ -154,6 +153,31 @@ bool bridge_init(void* module_handle) {
     }
     pthread_mutex_unlock(&g_init_mutex);
     return result;
+}
+
+void* bridge_module_handle(void) {
+    pthread_mutex_lock(&g_init_mutex);
+    void* handle = g_module_handle;
+    pthread_mutex_unlock(&g_init_mutex);
+    return handle;
+}
+
+Il2CppThread* bridge_thread_attach(void) {
+    if (!bridge_require_capability(BRIDGE_CAPABILITY_THREADS)) {
+        return NULL;
+    }
+    Il2CppDomain* domain = p_domain_get();
+    if (!domain) {
+        return NULL;
+    }
+    return p_thread_attach(domain);
+}
+
+void bridge_thread_detach(Il2CppThread* thread) {
+    if (!thread || !bridge_require_capability(BRIDGE_CAPABILITY_THREADS)) {
+        return;
+    }
+    p_thread_detach(thread);
 }
 
 bool bridge_require_capability(BridgeCapability capability) {

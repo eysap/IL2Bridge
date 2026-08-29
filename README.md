@@ -38,6 +38,8 @@ instrument.
 - A fixed-capacity event ring with resumable sequence numbers and loss
   reporting.
 - Unit tests plus an end-to-end `LD_PRELOAD` integration fixture.
+- In-process embedding by a second consumer, with a replaceable log sink and
+  multi-subscriber readiness.
 
 ## Architecture
 
@@ -231,7 +233,7 @@ change application behavior by design.
 | Socket | Private XDG subdirectory, socket mode `0600`, and a controlled `/tmp` fallback. |
 | Process identity | Hook IDs include PID and `/proc` start ticks to detect PID reuse. |
 | Hot path | Counter probes execute a generated atomic increment and jump; event formatting happens on the IPC thread. |
-| Memory bounds | 256 append-only hook slots, 1,024 event slots, bounded names and payloads. |
+| Memory bounds | 1,024 append-only hook slots, 1,024 event ring slots, bounded names and payloads. |
 | Event loss | Overwritten or contended publications increment an observable dropped-event counter. |
 | Shutdown | The watcher is joinable and the IPC socket is unlinked; active hooks must be removed before unloading the library. |
 

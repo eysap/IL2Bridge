@@ -5,8 +5,10 @@
 
 #include "il2bridge/loader/late_init.h"
 #include "il2bridge/loader/discovery.h"
+#include "il2bridge/loader/log.h"
 #include <dlfcn.h>
 #include <errno.h>
+#include <limits.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -14,12 +16,19 @@
 #include <string.h>
 #include <time.h>
 
-typedef void (*ready_callback_t)(void*);
+typedef struct {
+    Il2BridgeReadyFn callback;
+    void* user;
+} ReadySubscriber;
 
 static pthread_mutex_t g_state_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_once_t g_watcher_once = PTHREAD_ONCE_INIT;
-static ready_callback_t g_ready_callback;
+static ReadySubscriber g_ready_subscribers[IL2BRIDGE_READY_SUBSCRIBER_CAPACITY];
+static int g_ready_subscriber_count;
 static void* g_gameassembly_handle;
+// Set when late_init_fire_ready_for_testing injected a non-dlopen handle so
+// late_init_reset_for_testing knows it must not dlclose() it.
+static bool g_gameassembly_handle_synthetic;
 static struct timespec g_gameassembly_found_at;
 static bool g_ready_fired;
 static bool g_stop_requested;
@@ -41,39 +50,73 @@ static long elapsed_milliseconds(const struct timespec* start, const struct time
     return (now->tv_sec - start->tv_sec) * 1000L + (now->tv_nsec - start->tv_nsec) / 1000000L;
 }
 
+static long configured_timeout_milliseconds(void) {
+    const char* value = getenv("IL2BRIDGE_WATCHER_TIMEOUT_MS");
+    if (!value || !*value) {
+        return kWatcherTimeoutMilliseconds;
+    }
+
+    char* end = NULL;
+    errno = 0;
+    long parsed = strtol(value, &end, 10);
+    if (errno != 0 || *end != '\0' || parsed < 0) {
+        il2bridge_log("warning: invalid IL2BRIDGE_WATCHER_TIMEOUT_MS='%s'; using %d ms",
+                      value, kWatcherTimeoutMilliseconds);
+        return kWatcherTimeoutMilliseconds;
+    }
+    return parsed;
+}
+
+long late_init_configured_timeout_ms_for_testing(void) {
+    return configured_timeout_milliseconds();
+}
+
 static long configured_grace_milliseconds(void) {
     const char* value = getenv("IL2BRIDGE_WATCHER_GRACE_MS");
     if (!value || !*value) {
         return kDefaultGraceMilliseconds;
     }
 
+    // Compute timeout_ms and upper_bound BEFORE touching errno for grace parse,
+    // to avoid errno pollution from configured_timeout_milliseconds' strtol.
+    long timeout_ms = configured_timeout_milliseconds();
+    long upper_bound = (timeout_ms == 0) ? LONG_MAX : timeout_ms;
+
     char* end = NULL;
     errno = 0;
     long parsed = strtol(value, &end, 10);
-    if (errno != 0 || *end != '\0' || parsed < 0 || parsed > kWatcherTimeoutMilliseconds) {
-        fprintf(stderr, "[il2bridge] warning: invalid IL2BRIDGE_WATCHER_GRACE_MS='%s'; using %d ms\n",
-                value, kDefaultGraceMilliseconds);
+    if (errno != 0 || *end != '\0' || parsed < 0 || parsed > upper_bound) {
+        il2bridge_log("warning: invalid IL2BRIDGE_WATCHER_GRACE_MS='%s'; using %d ms",
+                      value, kDefaultGraceMilliseconds);
         return kDefaultGraceMilliseconds;
     }
     return parsed;
 }
 
 static void publish_ready(void) {
+    ReadySubscriber snapshot[IL2BRIDGE_READY_SUBSCRIBER_CAPACITY];
+    int count = 0;
+    void* handle = NULL;
+
     pthread_mutex_lock(&g_state_mutex);
     if (g_ready_fired || !g_gameassembly_handle) {
         pthread_mutex_unlock(&g_state_mutex);
         return;
     }
-
-    ready_callback_t callback = g_ready_callback;
-    void* handle = g_gameassembly_handle;
     g_ready_fired = true;
+    handle = g_gameassembly_handle;
+    count = g_ready_subscriber_count;
+    for (int i = 0; i < count; ++i) {
+        snapshot[i] = g_ready_subscribers[i];
+    }
     pthread_mutex_unlock(&g_state_mutex);
 
-    if (callback) {
-        callback(handle);
-    } else {
-        fprintf(stderr, "[il2bridge] warning: GameAssembly.so became ready before a callback was registered\n");
+    if (count == 0) {
+        il2bridge_log("warning: GameAssembly.so became ready with no subscriber");
+        return;
+    }
+    for (int i = 0; i < count; ++i) {
+        snapshot[i].callback(handle, snapshot[i].user);
     }
 }
 
@@ -106,8 +149,8 @@ static FindResult find_gameassembly(bool log_handle_failure) {
     if (!handle) {
         if (log_handle_failure) {
             const char* error = dlerror();
-            fprintf(stderr, "[il2bridge] warning: GameAssembly.so is mapped but RTLD_NOLOAD failed: %s\n",
-                    error ? error : "unknown error");
+            il2bridge_log("warning: GameAssembly.so is mapped but RTLD_NOLOAD failed: %s",
+                          error ? error : "unknown error");
         }
         return FIND_RETRY;
     }
@@ -124,7 +167,7 @@ static FindResult find_gameassembly(bool log_handle_failure) {
         return FIND_FOUND;
     }
 
-    fprintf(stderr, "[il2bridge] found mapped GameAssembly.so at '%s'\n", path);
+    il2bridge_log("found mapped GameAssembly.so at '%s'", path);
     return FIND_FOUND;
 }
 
@@ -165,7 +208,7 @@ static void* watcher_main(void* unused) {
             clock_gettime(CLOCK_MONOTONIC, &now);
             if (elapsed_milliseconds(&found_at, &now) >= grace_ms) {
                 if (grace_ms > 0) {
-                    fprintf(stderr, "[il2bridge] startup grace period complete after %ld ms\n", grace_ms);
+                    il2bridge_log("startup grace period complete after %ld ms", grace_ms);
                 }
                 publish_ready();
                 return NULL;
@@ -177,9 +220,9 @@ static void* watcher_main(void* unused) {
         long elapsed_ms = elapsed_milliseconds(&started_at, &now);
         // The timeout bounds discovery only. Once the module is found, always
         // honor the complete grace period even if it was mapped near 60 s.
-        if (result != FIND_FOUND && elapsed_ms >= kWatcherTimeoutMilliseconds) {
-            fprintf(stderr, "[il2bridge] warning: GameAssembly.so watcher timed out after %d seconds\n",
-                    kWatcherTimeoutMilliseconds / 1000);
+        const long timeout_ms = configured_timeout_milliseconds();
+        if (result != FIND_FOUND && timeout_ms > 0 && elapsed_ms >= timeout_ms) {
+            il2bridge_log("warning: GameAssembly.so watcher timed out after %ld ms", timeout_ms);
             return NULL;
         }
 
@@ -198,7 +241,7 @@ static void start_watcher_once(void) {
     pthread_t thread;
     int rc = pthread_create(&thread, NULL, watcher_main, NULL);
     if (rc != 0) {
-        fprintf(stderr, "[il2bridge] warning: failed to start GameAssembly.so watcher: %s\n", strerror(rc));
+        il2bridge_log("warning: failed to start GameAssembly.so watcher: %s", strerror(rc));
         return;
     }
 
@@ -225,10 +268,44 @@ void late_init_stop_gameassembly_watcher(void) {
     }
 }
 
-void late_init_set_ready_callback(void (*on_ready)(void*)) {
+bool late_init_add_ready_callback(Il2BridgeReadyFn on_ready, void* user) {
+    if (!on_ready) {
+        return false;
+    }
+
+    bool fire_now = false;
+    void* handle = NULL;
+
     pthread_mutex_lock(&g_state_mutex);
-    g_ready_callback = on_ready;
+    if (g_ready_subscriber_count >= IL2BRIDGE_READY_SUBSCRIBER_CAPACITY) {
+        pthread_mutex_unlock(&g_state_mutex);
+        return false;
+    }
+    g_ready_subscribers[g_ready_subscriber_count].callback = on_ready;
+    g_ready_subscribers[g_ready_subscriber_count].user = user;
+    ++g_ready_subscriber_count;
+    if (g_ready_fired) {
+        fire_now = true;
+        handle = g_gameassembly_handle;
+    }
     pthread_mutex_unlock(&g_state_mutex);
+
+    // A consumer registering after the fact must not have to poll.
+    if (fire_now) {
+        on_ready(handle, user);
+    }
+    return true;
+}
+
+void late_init_fire_ready_for_testing(void* gameassembly_handle) {
+    pthread_mutex_lock(&g_state_mutex);
+    if (!g_gameassembly_handle) {
+        g_gameassembly_handle = gameassembly_handle;
+        // Injected handle is not from dlopen; reset must not dlclose() it.
+        g_gameassembly_handle_synthetic = true;
+    }
+    pthread_mutex_unlock(&g_state_mutex);
+    publish_ready();
 }
 
 bool late_init_check_now_for_testing(void) {
@@ -238,13 +315,16 @@ bool late_init_check_now_for_testing(void) {
 void late_init_reset_for_testing(void) {
     pthread_mutex_lock(&g_state_mutex);
     void* handle = g_gameassembly_handle;
-    g_ready_callback = NULL;
+    bool synthetic = g_gameassembly_handle_synthetic;
+    g_ready_subscriber_count = 0;
     g_gameassembly_handle = NULL;
+    g_gameassembly_handle_synthetic = false;
     g_gameassembly_found_at = (struct timespec){0};
     g_ready_fired = false;
     pthread_mutex_unlock(&g_state_mutex);
 
-    if (handle) {
+    // Only real dlopen handles may be closed; a test-injected handle is not one.
+    if (handle && !synthetic) {
         dlclose(handle);
     }
 }

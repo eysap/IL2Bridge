@@ -3,6 +3,7 @@
 #include "il2bridge/loader/hooks.h"
 #include "il2bridge/loader/handlers.h"
 #include "il2bridge/loader/events.h"
+#include "il2bridge/loader/log.h"
 #include <errno.h>
 #include <poll.h>
 #include <pthread.h>
@@ -391,7 +392,7 @@ static void handle_hook(int client_fd, int argc, const char** args) {
             }
             installed = is_breakpoint
                 ? hook_install_breakpoint(target, handler->function_pointer, &hook_handle)
-                : hook_install_trampoline(target, handler->function_pointer, &hook_handle);
+                : hook_install_trampoline(target, handler->function_pointer, &hook_handle, NULL);
         }
     }
 
@@ -788,7 +789,7 @@ static bool bind_or_reclaim_stale_socket(int fd, const struct sockaddr_un* addr,
         return false;
     }
 
-    fprintf(stderr, "[il2bridge] removed orphaned IPC socket %s\n", path);
+    il2bridge_log("removed orphaned IPC socket %s", path);
     return bind(fd, (const struct sockaddr*)addr, sizeof(*addr)) == 0;
 }
 
@@ -804,7 +805,7 @@ IpcServer* ipc_server_start(void) {
     server->stop_pipe[1] = -1;
 
     if (!prepare_runtime_socket_path(getpid(), server->socket_path, sizeof(server->socket_path))) {
-        fprintf(stderr, "[il2bridge] could not prepare IPC socket path: %s\n", strerror(errno));
+        il2bridge_log("could not prepare IPC socket path: %s", strerror(errno));
         free(server);
         pthread_mutex_unlock(&g_server_lifecycle_mutex);
         return NULL;
@@ -812,7 +813,7 @@ IpcServer* ipc_server_start(void) {
 
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd < 0) {
-        fprintf(stderr, "[il2bridge] could not create IPC socket: %s\n", strerror(errno));
+        il2bridge_log("could not create IPC socket: %s", strerror(errno));
         free(server);
         pthread_mutex_unlock(&g_server_lifecycle_mutex);
         return NULL;
@@ -824,8 +825,8 @@ IpcServer* ipc_server_start(void) {
     memcpy(addr.sun_path, server->socket_path, strlen(server->socket_path) + 1);
 
     if (!bind_or_reclaim_stale_socket(fd, &addr, server->socket_path)) {
-        fprintf(stderr, "[il2bridge] could not bind IPC socket %s: %s\n",
-                server->socket_path, strerror(errno));
+        il2bridge_log("could not bind IPC socket %s: %s",
+                      server->socket_path, strerror(errno));
         close(fd);
         free(server);
         pthread_mutex_unlock(&g_server_lifecycle_mutex);
@@ -833,8 +834,8 @@ IpcServer* ipc_server_start(void) {
     }
 
     if (chmod(server->socket_path, S_IRUSR | S_IWUSR) != 0) {
-        fprintf(stderr, "[il2bridge] could not secure IPC socket %s: %s\n",
-                server->socket_path, strerror(errno));
+        il2bridge_log("could not secure IPC socket %s: %s",
+                      server->socket_path, strerror(errno));
         close(fd);
         unlink(server->socket_path);
         free(server);

@@ -29,6 +29,7 @@ static Il2CppClass g_class = { "FakeNamespace", "FakeClass" };
 #ifndef FAKE_GAMEASSEMBLY_CORE_ONLY
 static Il2CppObject g_object;
 static Il2CppString g_string = { 4, { 'H', 0x00E9, 0xD83D, 0xDE80 } };
+static Il2CppThread g_thread;
 #endif
 
 // Model an external, non-instrumented IL2CPP method with a relocatable prefix
@@ -139,7 +140,7 @@ Il2CppString* fake_gameassembly_string(void) { return &g_string; }
 
 Il2CppThread* il2cpp_thread_attach(Il2CppDomain* domain) {
     (void)domain;
-    return NULL;
+    return &g_thread;
 }
 
 void il2cpp_thread_detach(Il2CppThread* thread) {

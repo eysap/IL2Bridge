@@ -80,3 +80,43 @@ TEST_CASE("disabling a slot never lets a later install reuse it", "[hooks_regist
 
     REQUIRE(h1.slot != h2.slot);
 }
+
+TEST_CASE("the registry reports how many slots are used", "[hooks_registry]") {
+    hook_registry_reset_for_testing();
+    REQUIRE(hook_registry_used() == 0u);
+
+    int a, b;
+    HookHandle ha{}, hb{};
+    HookEntry ea = make_entry(&a);
+    HookEntry eb = make_entry(&b);
+    REQUIRE(hook_registry_add(&ea, &ha));
+    REQUIRE(hook_registry_add(&eb, &hb));
+    REQUIRE(hook_registry_used() == 2u);
+
+    // Disabling frees no slot: the count is monotonic by design.
+    REQUIRE(hook_registry_disable(ha));
+    REQUIRE(hook_registry_used() == 2u);
+
+    hook_registry_reset_for_testing();
+}
+
+TEST_CASE("the registry refuses to overflow its capacity", "[hooks_registry]") {
+    hook_registry_reset_for_testing();
+
+    // Distinct, in-bounds addresses: find_by_address rejects duplicates, and
+    // walking past a single object would be undefined behaviour under UBSan.
+    static char keys[HOOK_REGISTRY_CAPACITY + 1];
+    for (uint32_t i = 0; i < (uint32_t)HOOK_REGISTRY_CAPACITY; ++i) {
+        HookEntry entry = make_entry(&keys[i]);
+        HookHandle handle{};
+        REQUIRE(hook_registry_add(&entry, &handle));
+    }
+    REQUIRE(hook_registry_used() == (uint32_t)HOOK_REGISTRY_CAPACITY);
+
+    HookEntry overflow = make_entry(&keys[HOOK_REGISTRY_CAPACITY]);
+    HookHandle handle{};
+    REQUIRE_FALSE(hook_registry_add(&overflow, &handle));
+    REQUIRE(hook_registry_used() == (uint32_t)HOOK_REGISTRY_CAPACITY);
+
+    hook_registry_reset_for_testing();
+}

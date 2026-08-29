@@ -68,6 +68,7 @@ add_executable(il2bridge_loader_tests
     loader/ipc_protocol_test.cpp
     loader/ipc_server_test.cpp
     loader/late_init_test.cpp
+    loader/log_test.cpp
 )
 target_link_libraries(il2bridge_loader_tests PRIVATE il2bridge-loader Catch2::Catch2WithMain)
 target_link_libraries(il2bridge_loader_tests PRIVATE ${CMAKE_DL_LIBS} Threads::Threads)

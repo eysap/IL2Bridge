@@ -32,6 +32,20 @@ typedef enum {
 // serialized and publishes no partial table; call it before serving requests.
 IL2BRIDGE_LOADER_API bool bridge_init(void* module_handle);
 
+// The module handle passed to a successful bridge_init(), or NULL before one.
+// A consumer needing its own il2cpp_* access should dlsym() through this handle
+// rather than repeating the RTLD_NOLOAD discovery.
+IL2BRIDGE_LOADER_API void* bridge_module_handle(void);
+
+// Attaches the calling thread to the IL2CPP runtime so it may touch managed
+// memory. Returns NULL if BRIDGE_CAPABILITY_THREADS is unavailable, if the
+// domain accessor yields NULL, or if the underlying il2cpp_thread_attach call
+// fails. The returned thread must be released with bridge_thread_detach().
+IL2BRIDGE_LOADER_API Il2CppThread* bridge_thread_attach(void);
+
+// Releases a thread obtained from bridge_thread_attach(). NULL is ignored.
+IL2BRIDGE_LOADER_API void bridge_thread_detach(Il2CppThread* thread);
+
 // Resolves and caches one optional capability without invalidating the core.
 // Safe to call concurrently.
 IL2BRIDGE_LOADER_API bool bridge_require_capability(BridgeCapability capability);

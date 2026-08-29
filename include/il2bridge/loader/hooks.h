@@ -8,7 +8,11 @@
 extern "C" {
 #endif
 
-#define HOOK_REGISTRY_CAPACITY 256
+// Slots are allocated monotonically and never reused: disabling an entry frees
+// no slot. Reuse would require a generation counter inside HookHandle, which is
+// encoded on the IPC wire as <pid>:<start>:<slot>. A long-lived consumer should
+// install a hook once and gate its own dispatch rather than reinstalling.
+#define HOOK_REGISTRY_CAPACITY 1024
 
 typedef enum {
     HOOK_TYPE_BREAKPOINT,
@@ -33,7 +37,7 @@ typedef struct {
     void* probe_state;     // owned by an around hook, otherwise NULL
     void* owned_detour;    // generated around stub, otherwise NULL
     size_t owned_detour_len;
-    unsigned char original[16]; // original bytes, length depends on type
+    unsigned char original[32]; // original bytes; 28 is the x86-64 worst case
     unsigned char original_len;
     // Kept ABI-compatible with C++ tests. Published entries must access this
     // field through the __atomic builtins in registry.c.
@@ -53,6 +57,10 @@ IL2BRIDGE_LOADER_API const HookEntry* hook_registry_get(HookHandle handle);
 // Finds an enabled entry by target address. This lookup is signal-safe.
 IL2BRIDGE_LOADER_API const HookEntry* hook_registry_find_by_address(void* address);
 
+// Number of slots allocated so far, disabled entries included. Reaching
+// HOOK_REGISTRY_CAPACITY is permanent for the life of the process.
+IL2BRIDGE_LOADER_API uint32_t hook_registry_used(void);
+
 // Test-only registry reset.
 IL2BRIDGE_LOADER_API void hook_registry_reset_for_testing(void);
 
@@ -71,11 +79,17 @@ IL2BRIDGE_LOADER_API bool hook_uninstall_breakpoint(HookHandle handle);
 // nearby executable memory and target is patched with a 14-byte absolute
 // jump. Duplicate targets are rejected; mutations must be serialized.
 //
-// Current limits: the saved prologue is 16 bytes, in-region relative branches
-// and rel8 relocation are rejected, function boundaries are not known, and
-// the target patch is not atomic. Callers must treat installation/removal in a
-// running multithreaded process as a coordinated operation.
-IL2BRIDGE_LOADER_API bool hook_install_trampoline(void* target, void* detour, HookHandle* out);
+// trampoline_out may be NULL. When non-NULL it receives the callable
+// original-body trampoline BEFORE the target is patched, so a detour that
+// runs on the very first call already has a valid original to chain to. It is
+// set to NULL on entry and left NULL on every failure path.
+//
+// Current limits: in-region relative branches and rel8 relocation are
+// rejected, function boundaries are not known, and the target patch is not
+// atomic. Callers must treat installation/removal in a running multithreaded
+// process as a coordinated operation.
+IL2BRIDGE_LOADER_API bool hook_install_trampoline(void* target, void* detour, HookHandle* out,
+                                                  void** trampoline_out);
 
 // Installs a counting around probe that tail-jumps to the trampoline.
 IL2BRIDGE_LOADER_API bool hook_install_counter_probe(void* target, HookHandle* out);

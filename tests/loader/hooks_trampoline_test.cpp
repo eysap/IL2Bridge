@@ -68,6 +68,36 @@ struct ExecutableBuffer {
 // Builds an executable fixture that is callable as int(*)(void).
 using IntFn = int (*)();
 
+// A prologue whose whole-instruction boundary lands at 17 bytes: six pushes
+// (10 bytes) then `sub rsp, 0x88`, which needs an imm32 and so occupies 7.
+// This is a real IL2CPP method shape, not a synthetic worst case.
+const unsigned char kPrologue17[] = {
+    0x55,                                     // push rbp
+    0x41, 0x57,                               // push r15
+    0x41, 0x56,                               // push r14
+    0x41, 0x55,                               // push r13
+    0x41, 0x54,                               // push r12
+    0x53,                                     // push rbx
+    0x48, 0x81, 0xEC, 0x88, 0x00, 0x00, 0x00, // sub rsp, 0x88   -> boundary at 17
+    0x48, 0x81, 0xC4, 0x88, 0x00, 0x00, 0x00, // add rsp, 0x88
+    0x5B,                                     // pop rbx
+    0x41, 0x5C,                               // pop r12
+    0x41, 0x5D,                               // pop r13
+    0x41, 0x5E,                               // pop r14
+    0x41, 0x5F,                               // pop r15
+    0x5D,                                     // pop rbp
+    0xB8, 0x2A, 0x00, 0x00, 0x00,             // mov eax, 42
+    0xC3,                                     // ret
+};
+
+volatile int g_prologue17_detour_ran = 0;
+IntFn g_prologue17_original = nullptr;
+
+extern "C" int prologue17_detour(void) {
+    g_prologue17_detour_ran = g_prologue17_detour_ran + 1;
+    return g_prologue17_original ? g_prologue17_original() : -1;
+}
+
 } // namespace
 
 TEST_CASE("installing a trampoline hook redirects execution and preserves a callable original", "[hooks_trampoline]") {
@@ -75,7 +105,7 @@ TEST_CASE("installing a trampoline hook redirects execution and preserves a call
     g_detour_ran = 0;
 
     HookHandle handle{};
-    REQUIRE(hook_install_trampoline((void*)trampoline_test_target, (void*)trampoline_test_detour, &handle));
+    REQUIRE(hook_install_trampoline((void*)trampoline_test_target, (void*)trampoline_test_detour, &handle, nullptr));
 
     void* trampoline = hook_manager_get_trampoline(handle);
     REQUIRE(trampoline != nullptr);
@@ -95,7 +125,7 @@ TEST_CASE("after uninstall, the target runs normally without the detour firing",
     g_detour_ran = 0;
 
     HookHandle handle{};
-    REQUIRE(hook_install_trampoline((void*)trampoline_test_target, (void*)trampoline_test_detour, &handle));
+    REQUIRE(hook_install_trampoline((void*)trampoline_test_target, (void*)trampoline_test_detour, &handle, nullptr));
     REQUIRE(hook_uninstall_trampoline(handle));
 
     trampoline_test_target();
@@ -129,8 +159,8 @@ TEST_CASE("two independently installed trampoline hooks coexist without interfer
 
     HookHandle handle_a{};
     HookHandle handle_b{};
-    REQUIRE(hook_install_trampoline((void*)trampoline_test_target, (void*)trampoline_test_detour, &handle_a));
-    REQUIRE(hook_install_trampoline((void*)trampoline_test_target_b, (void*)trampoline_test_detour_b, &handle_b));
+    REQUIRE(hook_install_trampoline((void*)trampoline_test_target, (void*)trampoline_test_detour, &handle_a, nullptr));
+    REQUIRE(hook_install_trampoline((void*)trampoline_test_target_b, (void*)trampoline_test_detour_b, &handle_b, nullptr));
 
     trampoline_test_target();
     trampoline_test_target_b();
@@ -152,15 +182,15 @@ TEST_CASE("two independently installed trampoline hooks coexist without interfer
 
 TEST_CASE("installing a second trampoline hook on an already-hooked target is rejected", "[hooks_trampoline]") {
     HookHandle handle_a{};
-    REQUIRE(hook_install_trampoline((void*)trampoline_test_target, (void*)trampoline_test_detour, &handle_a));
+    REQUIRE(hook_install_trampoline((void*)trampoline_test_target, (void*)trampoline_test_detour, &handle_a, nullptr));
 
     HookHandle handle_dup{};
-    REQUIRE_FALSE(hook_install_trampoline((void*)trampoline_test_target, (void*)trampoline_test_detour_b, &handle_dup));
+    REQUIRE_FALSE(hook_install_trampoline((void*)trampoline_test_target, (void*)trampoline_test_detour_b, &handle_dup, nullptr));
 
     REQUIRE(hook_uninstall_trampoline(handle_a));
 
     HookHandle handle_again{};
-    REQUIRE(hook_install_trampoline((void*)trampoline_test_target, (void*)trampoline_test_detour, &handle_again));
+    REQUIRE(hook_install_trampoline((void*)trampoline_test_target, (void*)trampoline_test_detour, &handle_again, nullptr));
     REQUIRE(hook_uninstall_trampoline(handle_again));
 }
 
@@ -178,7 +208,7 @@ TEST_CASE("a relative jump whose destination lands inside the patch window is re
 
     void* dummy_detour = (void*)trampoline_test_detour_b;
     HookHandle handle{};
-    REQUIRE_FALSE(hook_install_trampoline(buffer.addr, dummy_detour, &handle));
+    REQUIRE_FALSE(hook_install_trampoline(buffer.addr, dummy_detour, &handle, nullptr));
 }
 
 
@@ -187,10 +217,10 @@ TEST_CASE("a relative jump whose destination lands inside the patch window is re
 TEST_CASE("install rejects null arguments", "[hooks_trampoline]") {
     HookHandle handle{};
 
-    REQUIRE_FALSE(hook_install_trampoline(nullptr, (void*)trampoline_test_detour, &handle));
-    REQUIRE_FALSE(hook_install_trampoline((void*)trampoline_test_target, nullptr, &handle));
+    REQUIRE_FALSE(hook_install_trampoline(nullptr, (void*)trampoline_test_detour, &handle, nullptr));
+    REQUIRE_FALSE(hook_install_trampoline((void*)trampoline_test_target, nullptr, &handle, nullptr));
     REQUIRE_FALSE(hook_install_trampoline((void*)trampoline_test_target,
-                                          (void*)trampoline_test_detour, nullptr));
+                                          (void*)trampoline_test_detour, nullptr, nullptr));
     REQUIRE_FALSE(hook_install_counter_probe(nullptr, &handle));
     REQUIRE_FALSE(hook_install_counter_probe((void*)trampoline_test_target, nullptr));
 }
@@ -207,7 +237,7 @@ TEST_CASE("hook_probe_hit_count rejects a null out parameter", "[hooks_trampolin
 TEST_CASE("a replace hook carries no probe counter", "[hooks_trampoline]") {
     HookHandle handle{};
     REQUIRE(hook_install_trampoline((void*)trampoline_test_target,
-                                    (void*)trampoline_test_detour, &handle));
+                                    (void*)trampoline_test_detour, &handle, nullptr));
 
     uint64_t count = 0;
     REQUIRE_FALSE(hook_probe_hit_count(handle, &count));
@@ -218,7 +248,7 @@ TEST_CASE("a replace hook carries no probe counter", "[hooks_trampoline]") {
 TEST_CASE("uninstalling twice fails the second time", "[hooks_trampoline]") {
     HookHandle handle{};
     REQUIRE(hook_install_trampoline((void*)trampoline_test_target,
-                                    (void*)trampoline_test_detour, &handle));
+                                    (void*)trampoline_test_detour, &handle, nullptr));
 
     REQUIRE(hook_uninstall_trampoline(handle));
     REQUIRE_FALSE(hook_uninstall_trampoline(handle));
@@ -237,22 +267,8 @@ TEST_CASE("a prologue that fails to decode is rejected", "[hooks_trampoline]") {
     ExecutableBuffer buffer(code, sizeof(code));
 
     HookHandle handle{};
-    REQUIRE_FALSE(hook_install_trampoline(buffer.addr, (void*)trampoline_test_detour_b, &handle));
+    REQUIRE_FALSE(hook_install_trampoline(buffer.addr, (void*)trampoline_test_detour_b, &handle, nullptr));
     REQUIRE_FALSE(hook_install_counter_probe(buffer.addr, &handle));
-}
-
-TEST_CASE("a prologue longer than the saved original bytes is rejected", "[hooks_trampoline]") {
-    // Two 10-byte movabs: the first instruction boundary at or past 14 bytes
-    // lands at 20, more than HookEntry::original can hold.
-    static const unsigned char code[] = {
-        0x48, 0xB8, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, // movabs rax, imm64
-        0x48, 0xBB, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, // movabs rbx, imm64
-        0xC3,
-    };
-    ExecutableBuffer buffer(code, sizeof(code));
-
-    HookHandle handle{};
-    REQUIRE_FALSE(hook_install_trampoline(buffer.addr, (void*)trampoline_test_detour_b, &handle));
 }
 
 // --- relocation -------------------------------------------------------------
@@ -330,7 +346,7 @@ TEST_CASE("an 8-bit relative branch is refused rather than mis-relocated", "[hoo
     REQUIRE(callable() == 42);
 
     HookHandle handle{};
-    REQUIRE_FALSE(hook_install_trampoline(buffer.addr, (void*)trampoline_test_detour_b, &handle));
+    REQUIRE_FALSE(hook_install_trampoline(buffer.addr, (void*)trampoline_test_detour_b, &handle, nullptr));
 
     // Refusing must leave the target untouched and still callable.
     REQUIRE(callable() == 42);
@@ -349,7 +365,7 @@ TEST_CASE("a trampoline hook refuses a target already claimed by a breakpoint ho
 
     HookHandle trampoline_handle{};
     REQUIRE_FALSE(hook_install_trampoline((void*)trampoline_test_target_b,
-                                          (void*)trampoline_test_detour, &trampoline_handle));
+                                          (void*)trampoline_test_detour, &trampoline_handle, nullptr));
     REQUIRE_FALSE(hook_install_counter_probe((void*)trampoline_test_target_b,
                                              &trampoline_handle));
 
@@ -385,12 +401,66 @@ TEST_CASE("a rel32 that cannot absorb the trampoline delta is refused", "[hooks_
     HookHandle forward_handle{};
     HookHandle backward_handle{};
     const bool forward_installed =
-        hook_install_trampoline(forward_buffer.addr, (void*)trampoline_test_detour_b, &forward_handle);
+        hook_install_trampoline(forward_buffer.addr, (void*)trampoline_test_detour_b, &forward_handle, nullptr);
     const bool backward_installed =
-        hook_install_trampoline(backward_buffer.addr, (void*)trampoline_test_detour_b, &backward_handle);
+        hook_install_trampoline(backward_buffer.addr, (void*)trampoline_test_detour_b, &backward_handle, nullptr);
 
     if (forward_installed) REQUIRE(hook_uninstall_trampoline(forward_handle));
     if (backward_installed) REQUIRE(hook_uninstall_trampoline(backward_handle));
 
     REQUIRE_FALSE((forward_installed && backward_installed));
+}
+
+TEST_CASE("a 17-byte prologue is accepted and its original stays callable", "[hooks_trampoline]") {
+    hook_registry_reset_for_testing();
+    g_prologue17_detour_ran = 0;
+    g_prologue17_original = nullptr;
+
+    ExecutableBuffer buffer(kPrologue17, sizeof(kPrologue17));
+    IntFn target = (IntFn)buffer.addr;
+    REQUIRE(target() == 42);
+
+    HookHandle handle{};
+    REQUIRE(hook_install_trampoline(buffer.addr, (void*)prologue17_detour, &handle, nullptr));
+
+    g_prologue17_original = (IntFn)hook_manager_get_trampoline(handle);
+    REQUIRE(g_prologue17_original != nullptr);
+
+    REQUIRE(target() == 42);
+    REQUIRE(g_prologue17_detour_ran == 1);
+
+    REQUIRE(hook_uninstall_trampoline(handle));
+    REQUIRE(target() == 42);
+    REQUIRE(g_prologue17_detour_ran == 1);
+}
+
+TEST_CASE("the trampoline is available through the out-parameter", "[hooks_trampoline]") {
+    hook_registry_reset_for_testing();
+    g_target_ran = 0;
+    g_detour_ran = 0;
+
+    HookHandle handle{};
+    void* trampoline = nullptr;
+    REQUIRE(hook_install_trampoline((void*)trampoline_test_target,
+                                    (void*)trampoline_test_detour, &handle, &trampoline));
+
+    REQUIRE(trampoline != nullptr);
+    REQUIRE(trampoline == hook_manager_get_trampoline(handle));
+
+    g_original_via_trampoline = (void (*)(void))trampoline;
+    trampoline_test_target();
+    REQUIRE(g_detour_ran == 1);
+    REQUIRE(g_target_ran == 1);
+
+    REQUIRE(hook_uninstall_trampoline(handle));
+    g_original_via_trampoline = nullptr;
+}
+
+TEST_CASE("a refused installation leaves the trampoline out-parameter null", "[hooks_trampoline]") {
+    hook_registry_reset_for_testing();
+
+    HookHandle handle{};
+    void* trampoline = (void*)0xDEADBEEF;
+    REQUIRE_FALSE(hook_install_trampoline(nullptr, (void*)trampoline_test_detour, &handle, &trampoline));
+    REQUIRE(trampoline == nullptr);
 }
