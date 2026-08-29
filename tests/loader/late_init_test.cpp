@@ -1,5 +1,6 @@
 #include "il2bridge/loader/late_init.h"
 #include <catch2/catch_test_macros.hpp>
+#include <cstdlib>
 #include <dlfcn.h>
 
 namespace {
@@ -95,4 +96,23 @@ TEST_CASE("subscriber registration is bounded and reports saturation", "[late_in
     }
     REQUIRE_FALSE(late_init_add_ready_callback(on_ready_b, nullptr));
     REQUIRE_FALSE(late_init_add_ready_callback(nullptr, nullptr));
+}
+
+TEST_CASE("the watcher timeout honours its environment variable", "[late_init]") {
+    unsetenv("IL2BRIDGE_WATCHER_TIMEOUT_MS");
+    REQUIRE(late_init_configured_timeout_ms_for_testing() == 60000);
+
+    setenv("IL2BRIDGE_WATCHER_TIMEOUT_MS", "5000", 1);
+    REQUIRE(late_init_configured_timeout_ms_for_testing() == 5000);
+
+    setenv("IL2BRIDGE_WATCHER_TIMEOUT_MS", "0", 1);
+    REQUIRE(late_init_configured_timeout_ms_for_testing() == 0);
+
+    setenv("IL2BRIDGE_WATCHER_TIMEOUT_MS", "not-a-number", 1);
+    REQUIRE(late_init_configured_timeout_ms_for_testing() == 60000);
+
+    setenv("IL2BRIDGE_WATCHER_TIMEOUT_MS", "-1", 1);
+    REQUIRE(late_init_configured_timeout_ms_for_testing() == 60000);
+
+    unsetenv("IL2BRIDGE_WATCHER_TIMEOUT_MS");
 }

@@ -35,6 +35,10 @@ IL2BRIDGE_LOADER_API void late_init_fire_ready_for_testing(void* gameassembly_ha
 // Test-only state reset and release of the RTLD_NOLOAD reference.
 IL2BRIDGE_LOADER_API void late_init_reset_for_testing(void);
 
+// Test-only view of the resolved watcher timeout, in milliseconds; 0 means no
+// timeout. Reads IL2BRIDGE_WATCHER_TIMEOUT_MS on each call.
+IL2BRIDGE_LOADER_API long late_init_configured_timeout_ms_for_testing(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -8,6 +8,7 @@
 #include "il2bridge/loader/log.h"
 #include <dlfcn.h>
 #include <errno.h>
+#include <limits.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -49,16 +50,42 @@ static long elapsed_milliseconds(const struct timespec* start, const struct time
     return (now->tv_sec - start->tv_sec) * 1000L + (now->tv_nsec - start->tv_nsec) / 1000000L;
 }
 
+static long configured_timeout_milliseconds(void) {
+    const char* value = getenv("IL2BRIDGE_WATCHER_TIMEOUT_MS");
+    if (!value || !*value) {
+        return kWatcherTimeoutMilliseconds;
+    }
+
+    char* end = NULL;
+    errno = 0;
+    long parsed = strtol(value, &end, 10);
+    if (errno != 0 || *end != '\0' || parsed < 0) {
+        il2bridge_log("warning: invalid IL2BRIDGE_WATCHER_TIMEOUT_MS='%s'; using %d ms",
+                      value, kWatcherTimeoutMilliseconds);
+        return kWatcherTimeoutMilliseconds;
+    }
+    return parsed;
+}
+
+long late_init_configured_timeout_ms_for_testing(void) {
+    return configured_timeout_milliseconds();
+}
+
 static long configured_grace_milliseconds(void) {
     const char* value = getenv("IL2BRIDGE_WATCHER_GRACE_MS");
     if (!value || !*value) {
         return kDefaultGraceMilliseconds;
     }
 
+    // Compute timeout_ms and upper_bound BEFORE touching errno for grace parse,
+    // to avoid errno pollution from configured_timeout_milliseconds' strtol.
+    long timeout_ms = configured_timeout_milliseconds();
+    long upper_bound = (timeout_ms == 0) ? LONG_MAX : timeout_ms;
+
     char* end = NULL;
     errno = 0;
     long parsed = strtol(value, &end, 10);
-    if (errno != 0 || *end != '\0' || parsed < 0 || parsed > kWatcherTimeoutMilliseconds) {
+    if (errno != 0 || *end != '\0' || parsed < 0 || parsed > upper_bound) {
         il2bridge_log("warning: invalid IL2BRIDGE_WATCHER_GRACE_MS='%s'; using %d ms",
                       value, kDefaultGraceMilliseconds);
         return kDefaultGraceMilliseconds;
@@ -193,9 +220,9 @@ static void* watcher_main(void* unused) {
         long elapsed_ms = elapsed_milliseconds(&started_at, &now);
         // The timeout bounds discovery only. Once the module is found, always
         // honor the complete grace period even if it was mapped near 60 s.
-        if (result != FIND_FOUND && elapsed_ms >= kWatcherTimeoutMilliseconds) {
-            il2bridge_log("warning: GameAssembly.so watcher timed out after %d seconds",
-                          kWatcherTimeoutMilliseconds / 1000);
+        const long timeout_ms = configured_timeout_milliseconds();
+        if (result != FIND_FOUND && timeout_ms > 0 && elapsed_ms >= timeout_ms) {
+            il2bridge_log("warning: GameAssembly.so watcher timed out after %ld ms", timeout_ms);
             return NULL;
         }
 
