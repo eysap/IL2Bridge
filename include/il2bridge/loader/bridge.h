@@ -38,8 +38,9 @@ IL2BRIDGE_LOADER_API bool bridge_init(void* module_handle);
 IL2BRIDGE_LOADER_API void* bridge_module_handle(void);
 
 // Attaches the calling thread to the IL2CPP runtime so it may touch managed
-// memory. Returns NULL if BRIDGE_CAPABILITY_THREADS is unavailable. The
-// returned thread must be released with bridge_thread_detach().
+// memory. Returns NULL if BRIDGE_CAPABILITY_THREADS is unavailable, if the
+// domain accessor yields NULL, or if the underlying il2cpp_thread_attach call
+// fails. The returned thread must be released with bridge_thread_detach().
 IL2BRIDGE_LOADER_API Il2CppThread* bridge_thread_attach(void);
 
 // Releases a thread obtained from bridge_thread_attach(). NULL is ignored.
