@@ -33,7 +33,7 @@ typedef struct {
     void* probe_state;     // owned by an around hook, otherwise NULL
     void* owned_detour;    // generated around stub, otherwise NULL
     size_t owned_detour_len;
-    unsigned char original[16]; // original bytes, length depends on type
+    unsigned char original[32]; // original bytes; 28 is the x86-64 worst case
     unsigned char original_len;
     // Kept ABI-compatible with C++ tests. Published entries must access this
     // field through the __atomic builtins in registry.c.
@@ -71,7 +71,7 @@ IL2BRIDGE_LOADER_API bool hook_uninstall_breakpoint(HookHandle handle);
 // nearby executable memory and target is patched with a 14-byte absolute
 // jump. Duplicate targets are rejected; mutations must be serialized.
 //
-// Current limits: the saved prologue is 16 bytes, in-region relative branches
+// Current limits: the saved prologue is 32 bytes, in-region relative branches
 // and rel8 relocation are rejected, function boundaries are not known, and
 // the target patch is not atomic. Callers must treat installation/removal in a
 // running multithreaded process as a coordinated operation.
