@@ -71,11 +71,17 @@ IL2BRIDGE_LOADER_API bool hook_uninstall_breakpoint(HookHandle handle);
 // nearby executable memory and target is patched with a 14-byte absolute
 // jump. Duplicate targets are rejected; mutations must be serialized.
 //
-// Current limits: the saved prologue is 32 bytes, in-region relative branches
-// and rel8 relocation are rejected, function boundaries are not known, and
-// the target patch is not atomic. Callers must treat installation/removal in a
-// running multithreaded process as a coordinated operation.
-IL2BRIDGE_LOADER_API bool hook_install_trampoline(void* target, void* detour, HookHandle* out);
+// trampoline_out may be NULL. When non-NULL it receives the callable
+// original-body trampoline BEFORE the target is patched, so a detour that
+// runs on the very first call already has a valid original to chain to. It is
+// set to NULL on entry and left NULL on every failure path.
+//
+// Current limits: in-region relative branches and rel8 relocation are
+// rejected, function boundaries are not known, and the target patch is not
+// atomic. Callers must treat installation/removal in a running multithreaded
+// process as a coordinated operation.
+IL2BRIDGE_LOADER_API bool hook_install_trampoline(void* target, void* detour, HookHandle* out,
+                                                  void** trampoline_out);
 
 // Installs a counting around probe that tail-jumps to the trampoline.
 IL2BRIDGE_LOADER_API bool hook_install_counter_probe(void* target, HookHandle* out);
