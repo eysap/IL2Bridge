@@ -12,7 +12,8 @@
 // The callback and destructor can run on different threads.
 static IpcServer* g_server = NULL;
 
-static void on_gameassembly_ready(void* gameassembly_handle) {
+static void on_gameassembly_ready(void* gameassembly_handle, void* user) {
+    (void)user;
     if (!bridge_init(gameassembly_handle)) {
         fprintf(stderr, "[il2bridge] failed to resolve required il2cpp_* symbols\n");
         return;
@@ -30,7 +31,10 @@ static void on_gameassembly_ready(void* gameassembly_handle) {
 
 __attribute__((constructor))
 static void il2bridge_loader_init(void) {
-    late_init_set_ready_callback(on_gameassembly_ready);
+    if (!late_init_add_ready_callback(on_gameassembly_ready, NULL)) {
+        fprintf(stderr, "[il2bridge] failed to register the readiness callback\n");
+        return;
+    }
     fprintf(stderr, "[il2bridge] loader injected, watching for GameAssembly.so\n");
     if (!getenv("IL2BRIDGE_DISABLE_WATCHER")) {
         late_init_start_gameassembly_watcher();

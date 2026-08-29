@@ -14,12 +14,19 @@
 #include <string.h>
 #include <time.h>
 
-typedef void (*ready_callback_t)(void*);
+typedef struct {
+    Il2BridgeReadyFn callback;
+    void* user;
+} ReadySubscriber;
 
 static pthread_mutex_t g_state_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_once_t g_watcher_once = PTHREAD_ONCE_INIT;
-static ready_callback_t g_ready_callback;
+static ReadySubscriber g_ready_subscribers[IL2BRIDGE_READY_SUBSCRIBER_CAPACITY];
+static int g_ready_subscriber_count;
 static void* g_gameassembly_handle;
+// Set when late_init_fire_ready_for_testing injected a non-dlopen handle so
+// late_init_reset_for_testing knows it must not dlclose() it.
+static bool g_gameassembly_handle_synthetic;
 static struct timespec g_gameassembly_found_at;
 static bool g_ready_fired;
 static bool g_stop_requested;
@@ -59,21 +66,29 @@ static long configured_grace_milliseconds(void) {
 }
 
 static void publish_ready(void) {
+    ReadySubscriber snapshot[IL2BRIDGE_READY_SUBSCRIBER_CAPACITY];
+    int count = 0;
+    void* handle = NULL;
+
     pthread_mutex_lock(&g_state_mutex);
     if (g_ready_fired || !g_gameassembly_handle) {
         pthread_mutex_unlock(&g_state_mutex);
         return;
     }
-
-    ready_callback_t callback = g_ready_callback;
-    void* handle = g_gameassembly_handle;
     g_ready_fired = true;
+    handle = g_gameassembly_handle;
+    count = g_ready_subscriber_count;
+    for (int i = 0; i < count; ++i) {
+        snapshot[i] = g_ready_subscribers[i];
+    }
     pthread_mutex_unlock(&g_state_mutex);
 
-    if (callback) {
-        callback(handle);
-    } else {
-        fprintf(stderr, "[il2bridge] warning: GameAssembly.so became ready before a callback was registered\n");
+    if (count == 0) {
+        fprintf(stderr, "[il2bridge] warning: GameAssembly.so became ready with no subscriber\n");
+        return;
+    }
+    for (int i = 0; i < count; ++i) {
+        snapshot[i].callback(handle, snapshot[i].user);
     }
 }
 
@@ -225,10 +240,44 @@ void late_init_stop_gameassembly_watcher(void) {
     }
 }
 
-void late_init_set_ready_callback(void (*on_ready)(void*)) {
+bool late_init_add_ready_callback(Il2BridgeReadyFn on_ready, void* user) {
+    if (!on_ready) {
+        return false;
+    }
+
+    bool fire_now = false;
+    void* handle = NULL;
+
     pthread_mutex_lock(&g_state_mutex);
-    g_ready_callback = on_ready;
+    if (g_ready_subscriber_count >= IL2BRIDGE_READY_SUBSCRIBER_CAPACITY) {
+        pthread_mutex_unlock(&g_state_mutex);
+        return false;
+    }
+    g_ready_subscribers[g_ready_subscriber_count].callback = on_ready;
+    g_ready_subscribers[g_ready_subscriber_count].user = user;
+    ++g_ready_subscriber_count;
+    if (g_ready_fired) {
+        fire_now = true;
+        handle = g_gameassembly_handle;
+    }
     pthread_mutex_unlock(&g_state_mutex);
+
+    // A consumer registering after the fact must not have to poll.
+    if (fire_now) {
+        on_ready(handle, user);
+    }
+    return true;
+}
+
+void late_init_fire_ready_for_testing(void* gameassembly_handle) {
+    pthread_mutex_lock(&g_state_mutex);
+    if (!g_gameassembly_handle) {
+        g_gameassembly_handle = gameassembly_handle;
+        // Injected handle is not from dlopen; reset must not dlclose() it.
+        g_gameassembly_handle_synthetic = true;
+    }
+    pthread_mutex_unlock(&g_state_mutex);
+    publish_ready();
 }
 
 bool late_init_check_now_for_testing(void) {
@@ -238,13 +287,16 @@ bool late_init_check_now_for_testing(void) {
 void late_init_reset_for_testing(void) {
     pthread_mutex_lock(&g_state_mutex);
     void* handle = g_gameassembly_handle;
-    g_ready_callback = NULL;
+    bool synthetic = g_gameassembly_handle_synthetic;
+    g_ready_subscriber_count = 0;
     g_gameassembly_handle = NULL;
+    g_gameassembly_handle_synthetic = false;
     g_gameassembly_found_at = (struct timespec){0};
     g_ready_fired = false;
     pthread_mutex_unlock(&g_state_mutex);
 
-    if (handle) {
+    // Only real dlopen handles may be closed; a test-injected handle is not one.
+    if (handle && !synthetic) {
         dlclose(handle);
     }
 }
