@@ -156,7 +156,10 @@ static void write_absolute_jump(unsigned char* at, void* destination) {
     memcpy(at + 6, &destination, sizeof(void*));
 }
 
-bool hook_install_trampoline(void* target, void* detour, HookHandle* out) {
+bool hook_install_trampoline(void* target, void* detour, HookHandle* out, void** trampoline_out) {
+    if (trampoline_out) {
+        *trampoline_out = NULL;
+    }
     if (!target || !detour || !out) {
         return false;
     }
@@ -200,8 +203,17 @@ bool hook_install_trampoline(void* target, void* detour, HookHandle* out) {
     entry.original_len = (unsigned char)patch_len;
     entry.disabled = false;
 
+    // The caller must be able to chain to the original before the target is
+    // patched; after the patch, a detour may run at any moment.
+    if (trampoline_out) {
+        *trampoline_out = tramp;
+    }
+
     // Publish before patching so every live detour has an uninstall handle.
     if (!hook_registry_add(&entry, out)) {
+        if (trampoline_out) {
+            *trampoline_out = NULL;
+        }
         munmap(tramp, patch_len + PATCH_SIZE);
         return false;
     }

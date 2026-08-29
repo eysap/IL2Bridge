@@ -391,7 +391,7 @@ static void handle_hook(int client_fd, int argc, const char** args) {
             }
             installed = is_breakpoint
                 ? hook_install_breakpoint(target, handler->function_pointer, &hook_handle)
-                : hook_install_trampoline(target, handler->function_pointer, &hook_handle);
+                : hook_install_trampoline(target, handler->function_pointer, &hook_handle, NULL);
         }
     }
 
